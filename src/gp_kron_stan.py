@@ -4,10 +4,13 @@ import datetime
 import difflib
 import functools
 from hashlib import md5
+import inspect
 import os
+from pathlib import Path
 import pickle
 import re
 from typing import List
+import sys
 
 from matplotlib import gridspec
 import matplotlib.pyplot as plt
@@ -465,7 +468,9 @@ class GPFreqModel(GPModel):
 
     @classmethod
     def get_template(cls):
-        with open('gp1d_template.stan', 'r') as f:
+        this_module = sys.modules[cls.__module__]
+        codepath = Path(inspect.getfile(this_module)).parent / 'gp1d_template.stan'
+        with codepath.open('r') as f:
             return f.read().splitlines()
 
     @classmethod
@@ -609,7 +614,9 @@ class GPFreqPhaseModel(GPModel):
 
     @classmethod
     def get_template(cls):
-        with open('gp2d_template.stan', 'r') as f:
+        this_module = sys.modules[cls.__module__]
+        codepath = Path(inspect.getfile(this_module)).parent / 'gp2d_template.stan'
+        with codepath.open('r') as f:
             return f.read().splitlines()
 
     @classmethod
