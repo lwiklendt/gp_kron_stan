@@ -888,8 +888,11 @@ def simplify_patsy_column_names(column_name, simplify_terms=True):
         if simplify_terms and '[' in column_name:
             labels = []
             for term in column_name.split(':'):
-                m = re.search(r'.+\[(.+)\]', term)
-                labels.append(m.group(1))
+                if '[' in term:
+                    m = re.search(r'.+\[(.+)\]', term)
+                    labels.append(m.group(1))
+                else:
+                    labels.append(term)
             column_name = '_'.join(labels)
     return column_name
 
