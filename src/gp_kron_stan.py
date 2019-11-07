@@ -565,8 +565,8 @@ class GPFreqModel(GPModel):
 
         mu_ci = np.array([np.percentile(samples, q, axis=0) for q in (2.5, 97.5)])
 
-        ax.plot(log2_freqs_cpm, mu_ci.T, c='w', ls=':', zorder=40)
-        ax.plot(log2_freqs_cpm, samples.T, c='w', lw=0.5, alpha=0.025, zorder=20)
+        ax.plot(log2_freqs_cpm, mu_ci.T, c='k', ls=':', zorder=40)
+        ax.plot(log2_freqs_cpm, samples.T, c='k', lw=0.5, alpha=0.01, zorder=20)
 
         if not icpt:
             ax.axhline(0, c=(1, 0, 0), zorder=50)
