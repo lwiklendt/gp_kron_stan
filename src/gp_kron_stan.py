@@ -563,7 +563,9 @@ class GPFreqModel(GPModel):
 
         ax.get_figure().sca(ax)
 
-        mu_ci = np.array([np.percentile(samples, q, axis=0) for q in (2.5, 97.5)])
+        lower = 100 * (0.5 * alpha)
+        upper = 100 * (1 - 0.5 * alpha)
+        mu_ci = np.array([np.percentile(samples, q, axis=0) for q in (lower, upper)])
 
         ax.plot(log2_freqs_cpm, mu_ci.T, c='k', ls=':', zorder=40)
         ax.plot(log2_freqs_cpm, samples.T, c='k', lw=0.5, alpha=0.01, zorder=20)
