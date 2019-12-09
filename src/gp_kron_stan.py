@@ -567,8 +567,13 @@ class GPFreqModel(GPModel):
         upper = 100 * (1 - 0.5 * alpha)
         mu_ci = np.array([np.percentile(samples, q, axis=0) for q in (lower, upper)])
 
-        ax.plot(log2_freqs_cpm, mu_ci.T, c='k', ls=':', zorder=40)
-        ax.plot(log2_freqs_cpm, samples.T, c='k', lw=0.5, alpha=0.01, zorder=20)
+        facecolor_value = mcolors.rgb_to_hsv(ax.get_facecolor()[:3])[-1]
+        if facecolor_value > 0.5:
+            linecolor = 'k'
+        else:
+            linecolor = 'w'
+        ax.plot(log2_freqs_cpm, mu_ci.T, c=linecolor, ls=':', zorder=40)
+        ax.plot(log2_freqs_cpm, samples.T, c=linecolor, lw=0.5, alpha=0.01, zorder=20)
 
         if not icpt:
             ax.axhline(0, c=(1, 0, 0), zorder=50)
