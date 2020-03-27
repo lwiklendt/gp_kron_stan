@@ -43,11 +43,11 @@ class GPModel(ABC):
         self.re_mu_levels = dict()
         self.re_noise_coeffs = dict()
         self.re_noise_levels = dict()
-        for ri, re_formula in enumerate(self.re_mu_formulas):
+        for re_formula in self.re_mu_formulas:
             re_dmat, factor_dmat = self.dmats_mu_re[re_formula]
             self.re_mu_coeffs[re_formula] = re_dmat.design_info.column_names
             self.re_mu_levels[re_formula] = factor_dmat.design_info.column_names
-        for ri, re_formula in enumerate(self.re_noise_formulas):
+        for re_formula in self.re_noise_formulas:
             re_dmat, factor_dmat = self.dmats_noise_re[re_formula]
             self.re_noise_coeffs[re_formula] = re_dmat.design_info.column_names
             self.re_noise_levels[re_formula] = factor_dmat.design_info.column_names
@@ -120,6 +120,37 @@ class GPModel(ABC):
             self.code[line_start] = contents
             self.code[line_start+1:line_end+1] = [None, ] * (line_end - line_start)
         self.code = '\n'.join([line for line in self.code if line is not None])
+
+    def __str__(self):
+        s = ''
+
+        # plot general sizes
+        if 'y' in self.stan_input_data:
+            y = self.stan_input_data['y']
+            s += f'num units = {y.shape[0]}\n'
+            s += f'response shape = {np.array(y.shape[1:]).squeeze()}\n'
+
+        # plot design matrix schemas
+        s += f'fe_mu_formula:\n  {self.fe_mu_formula}\n    = '
+        s += ' + '.join(simplify_patsy_column_names(self.fe_mu_coeffs)) + '\n'
+        s += f'fe_noise_formula:\n  {self.fe_noise_formula}\n    = '
+        s += ' + '.join(simplify_patsy_column_names(self.fe_noise_coeffs)) + '\n'
+        if len(self.re_mu_formulas) > 0:
+            s += 're_mu_formulas:\n  '
+            for formula in self.re_mu_formulas:
+                coeffs = simplify_patsy_column_names(self.re_mu_coeffs[formula])
+                levels = simplify_patsy_column_names(self.re_mu_levels[formula])
+                s += f'{formula}\n    = ' + ' + '.join(coeffs)
+                s += '\n    | ' + ' + '.join(levels)
+        if len(self.re_noise_formulas) > 0:
+            s += 're_noise_formulas:\n  '
+            for formula in self.re_noise_formulas:
+                coeffs = simplify_patsy_column_names(self.re_noise_coeffs[formula])
+                levels = simplify_patsy_column_names(self.re_noise_levels[formula])
+                s += f'{formula}\n    = ' + ' + '.join(coeffs)
+                s += '\n    | ' + ' + '.join(levels)
+
+        return s
 
     @classmethod
     def get_template(cls) -> List[str]:
