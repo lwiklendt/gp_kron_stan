@@ -190,9 +190,9 @@ model {
   matrix[N,F*H] log_omega;
   
   // user-level priors on lengthscale
-  lambdas_noise            ~ gamma(2, 1);
-  to_vector(lambdas_beta)  ~ gamma(2, 1);
-  to_vector(lambdas_gamma) ~ gamma(2, 1);
+  lambdas_noise            ~ {prior_lambda_noise};
+  to_vector(lambdas_beta)  ~ {prior_lambdas_beta};
+  to_vector(lambdas_gamma) ~ {prior_lambdas_gamma};
   Lambda_chol_noise ~ lkj_corr_cholesky(2);
   Lambda_chol_beta  ~ lkj_corr_cholesky(2);
   Lambda_chol_gamma ~ lkj_corr_cholesky(2);
@@ -208,10 +208,10 @@ model {
   
   offset_eta ~ student_t(3, mean_y, 4);
   
-  tau_beta  ~ gamma(2, 1);
-  tau_gamma ~ gamma(2, 1);
-  tau_sigma ~ gamma(2, 1);
-  sigma_noise ~ gamma(2, 1);
+  tau_gamma ~ {prior_tau_gamma};
+  tau_beta  ~ {prior_tau_beta};
+  tau_sigma ~ {prior_tau_sigma};
+  sigma_noise ~ {prior_sigma_noise};
   
   eta       = X * beta + offset_eta;
   log_omega = W * gamma;

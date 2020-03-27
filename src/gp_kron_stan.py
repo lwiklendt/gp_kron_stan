@@ -24,13 +24,22 @@ import pystan
 
 class GPModel(ABC):
 
-    def __init__(self, df, fe_mu_formula=None, re_mu_formulas=None, fe_noise_formula=None, re_noise_formulas=None):
+    def __init__(self, df, fe_mu_formula=None, re_mu_formulas=None, fe_noise_formula=None, re_noise_formulas=None,
+                 priors=None):
 
         self.df = df
         self.fe_mu_formula     = fe_mu_formula     or '1'
         self.re_mu_formulas    = re_mu_formulas    or []
         self.fe_noise_formula  = fe_noise_formula  or '1'
         self.re_noise_formulas = re_noise_formulas or []
+
+        self.priors = priors or dict()
+
+        # set default priors
+        varnames = ['lambda_noise', 'lambdas_gamma', 'lambdas_beta',
+                    'tau_sigma', 'tau_gamma', 'tau_beta', 'sigma_noise']
+        for varname in varnames:
+            self.priors[varname] = self.priors.get(varname, 'gamma(2, 1)')
 
         # create design matrices
         self.x, self.zs, self.dmat_mu   , self.dmats_mu_re    = make_design_matrices(df, fe_mu_formula   , re_mu_formulas   )
@@ -92,7 +101,7 @@ class GPModel(ABC):
                 else:
                     blueprint_line_idxs[loc][1] = line_end
 
-        # make code from blueprints to inject back into template
+        # make random-effect code from blueprints to inject back into template
         syringe = {k: [] for k, _ in locs.items()}
         for zs, dpar, pre_vname in [(self.zs, 'eta', 'mu'), (self.us, 'log_omega', 'noise')]:
             for ti, (z, term) in enumerate(zs, 1):
@@ -120,6 +129,11 @@ class GPModel(ABC):
             self.code[line_start] = contents
             self.code[line_start+1:line_end+1] = [None, ] * (line_end - line_start)
         self.code = '\n'.join([line for line in self.code if line is not None])
+
+        # inject priors
+        for varname, prior in self.priors.items():
+            locator = f'{{prior_{varname}}}'
+            self.code = self.code.replace(locator, prior)
 
     def __str__(self):
         s = ''
@@ -299,7 +313,7 @@ class GPModel(ABC):
 
         print(f'min, max Rhat = {np.nanmin(samples.rhat)}, {np.nanmax(samples.rhat)}')
 
-        return samples
+        return samples, needs_sample
 
     def fit(self, samples, component, preds=None, **kwargs_preds):
         if component == 'eta':
@@ -491,8 +505,9 @@ class GPModel(ABC):
 
 class GPFreqModel(GPModel):
 
-    def __init__(self, df, fe_mu_formula=None, re_mu_formulas=None, fe_noise_formula=None, re_noise_formulas=None):
-        super().__init__(df, fe_mu_formula, re_mu_formulas, fe_noise_formula, re_noise_formulas)
+    def __init__(self, df, fe_mu_formula=None, re_mu_formulas=None, fe_noise_formula=None, re_noise_formulas=None,
+                 priors=None):
+        super().__init__(df, fe_mu_formula, re_mu_formulas, fe_noise_formula, re_noise_formulas, priors)
 
         # init variables that will hold frequencies once set_data is called
         self.freqs = None
@@ -642,8 +657,9 @@ class GPFreqModel(GPModel):
 
 class GPFreqPhaseModel(GPModel):
 
-    def __init__(self, df, fe_mu_formula=None, re_mu_formulas=None, fe_noise_formula=None, re_noise_formulas=None, sep=None):
-        super().__init__(df, fe_mu_formula, re_mu_formulas, fe_noise_formula, re_noise_formulas)
+    def __init__(self, df, fe_mu_formula=None, re_mu_formulas=None, fe_noise_formula=None, re_noise_formulas=None,
+                 priors=None, sep=None):
+        super().__init__(df, fe_mu_formula, re_mu_formulas, fe_noise_formula, re_noise_formulas, priors)
         self.sep = sep
 
         # init variables that will hold frequencies and phases once set_data is called

@@ -150,19 +150,19 @@ model {
   matrix[N,F] eta;
   matrix[N,F] log_omega;
   
-  lambda_noise  ~ gamma(2, 1);
-  lambdas_gamma ~ gamma(2, 1);
-  lambdas_beta  ~ gamma(2, 1);
+  lambda_noise  ~ {prior_lambda_noise};
+  lambdas_gamma ~ {prior_lambdas_gamma};
+  lambdas_beta  ~ {prior_lambdas_beta};
   
   // change-of-variables adjustment
   target += sum(log_lambdas_beta);
   target += sum(log_lambdas_gamma);
   
   offset_eta ~ student_t(3, mean_y, 4);
-  tau_gamma ~ gamma(2, 1);
-  tau_beta  ~ gamma(2, 1);
-  tau_sigma ~ gamma(2, 1);
-  sigma_noise ~ gamma(2, 1);
+  tau_gamma ~ {prior_tau_gamma};
+  tau_beta  ~ {prior_tau_beta};
+  tau_sigma ~ {prior_tau_sigma};
+  sigma_noise ~ {prior_sigma_noise};
   
   eta = X * beta + offset_eta;
   log_omega = W * gamma;
