@@ -587,8 +587,8 @@ class GPFreqModel(GPModel):
         log2_freqs_cpm = np.log2(freq_cpm)
 
         # create ticks, labels, and grid for freq and phase
-        freq_order1 = int(log2_freqs_cpm[0])
-        freq_order2 = int(log2_freqs_cpm[-1])
+        freq_order1 = int(round(log2_freqs_cpm[0]))
+        freq_order2 = int(round(log2_freqs_cpm[-1]))
         freq_ticks = np.arange(freq_order1, freq_order2 + 1, dtype=np.int32)
         freq_labels = ['{}'.format(2**fe) if fe >= 0 else '1/{}'.format(2**(-fe)) for fe in freq_ticks]
 
