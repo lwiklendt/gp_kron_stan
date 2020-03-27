@@ -75,9 +75,9 @@ transformed data {
 
 
 parameters {
-  vector[2] z_log_lambdas_noise;
-  matrix[2,P] z_log_lambdas_beta;
-  matrix[2,Q] z_log_lambdas_gamma;
+  vector[2] z_log_lambda_noise;
+  matrix[2,P] z_log_lambda_beta;
+  matrix[2,Q] z_log_lambda_gamma;
   
   cholesky_factor_corr[2] Lambda_chol_noise;
   cholesky_factor_corr[2] Lambda_chol_beta;
@@ -97,7 +97,7 @@ parameters {
   real<lower=0> sigma_{v};
   matrix[{nlev},F*H] z_{v};
   cholesky_factor_corr[2] Lambda_chol_{v};
-  vector[2] z_log_lambdas_{v};
+  vector[2] z_log_lambda_{v};
   
   /*** end parameters onecol ***/
   /*** start parameters multicol ***/
@@ -106,7 +106,7 @@ parameters {
   cholesky_factor_corr[{ncol}] chol_corr_{v};
   matrix[{ncol},F*H] z_{v}[{nlev}];
   cholesky_factor_corr[2] Lambda_chol_{v};
-  matrix[2,{ncol}] z_log_lambdas_{v};
+  matrix[2,{ncol}] z_log_lambda_{v};
   
   /*** end parameters multicol ***/
 }
@@ -114,12 +114,12 @@ parameters {
 
 transformed parameters {
   
-  vector[2]   log_lambdas_noise = Lambda_chol_noise * z_log_lambdas_noise;
-  matrix[2,P] log_lambdas_beta  = Lambda_chol_beta  * z_log_lambdas_beta;
-  matrix[2,Q] log_lambdas_gamma = Lambda_chol_gamma * z_log_lambdas_gamma;
-  vector[2]   lambdas_noise = exp(log_lambdas_noise);
-  matrix[2,P] lambdas_beta  = rep_matrix(lambdas_noise, P) + exp(log_lambdas_beta);
-  matrix[2,Q] lambdas_gamma = rep_matrix(lambdas_noise, Q) + exp(log_lambdas_gamma);
+  vector[2]   log_lambda_noise = Lambda_chol_noise * z_log_lambda_noise;
+  matrix[2,P] log_lambda_beta  = Lambda_chol_beta  * z_log_lambda_beta;
+  matrix[2,Q] log_lambda_gamma = Lambda_chol_gamma * z_log_lambda_gamma;
+  vector[2]   lambda_noise = exp(log_lambda_noise);
+  matrix[2,P] lambda_beta  = rep_matrix(lambda_noise, P) + exp(log_lambda_beta);
+  matrix[2,Q] lambda_gamma = rep_matrix(lambda_noise, Q) + exp(log_lambda_gamma);
   
   matrix[P,F*H] beta;
   matrix[Q,F*H] gamma;
@@ -127,15 +127,15 @@ transformed parameters {
   /*** start transformed parameter declarations onecol ***/
   
   matrix[{nlev},F*H] {v};
-  vector[2] log_lambdas_{v} = Lambda_chol_{v} * z_log_lambdas_{v};
-  vector[2] lambdas_{v} = lambdas_noise + exp(log_lambdas_{v});
+  vector[2] log_lambda_{v} = Lambda_chol_{v} * z_log_lambda_{v};
+  vector[2] lambda_{v} = lambda_noise + exp(log_lambda_{v});
   
   /*** end transformed parameter declarations onecol ***/
   /*** start transformed parameter declarations multicol ***/
   
   matrix[{ncol},F*H] {v}[{nlev}];
-  matrix[2,{ncol}] log_lambdas_{v} = Lambda_chol_{v} * z_log_lambdas_{v};
-  matrix[2,{ncol}] lambdas_{v} = rep_matrix(lambdas_noise, {ncol}) + exp(log_lambdas_{v});
+  matrix[2,{ncol}] log_lambda_{v} = Lambda_chol_{v} * z_log_lambda_{v};
+  matrix[2,{ncol}] lambda_{v} = rep_matrix(lambda_noise, {ncol}) + exp(log_lambda_{v});
   
   /*** end transformed parameter declarations multicol ***/
   
@@ -144,21 +144,21 @@ transformed parameters {
     matrix[H,H] kern_chol_h;
     
     for (q in 1:Q) {
-      kern_chol_f = cholesky_decompose(kern_func_f(fd, lambdas_gamma[1,q]) + nugget * I_f);
-      kern_chol_h = cholesky_decompose(kern_func_h(hd, lambdas_gamma[2,q]) + nugget * I_h);
+      kern_chol_f = cholesky_decompose(kern_func_f(fd, lambda_gamma[1,q]) + nugget * I_f);
+      kern_chol_h = cholesky_decompose(kern_func_h(hd, lambda_gamma[2,q]) + nugget * I_h);
       gamma[q] = to_row_vector(tau_gamma * kron_mvprod2(kern_chol_h, kern_chol_f, to_matrix(z_gamma[q], F, H)));
     }
     
     for (p in 1:P) {
-      kern_chol_f = cholesky_decompose(kern_func_f(fd, lambdas_beta[1,p]) + nugget * I_f);
-      kern_chol_h = cholesky_decompose(kern_func_h(hd, lambdas_beta[2,p]) + nugget * I_h);
+      kern_chol_f = cholesky_decompose(kern_func_f(fd, lambda_beta[1,p]) + nugget * I_f);
+      kern_chol_h = cholesky_decompose(kern_func_h(hd, lambda_beta[2,p]) + nugget * I_h);
       beta[p] = to_row_vector(tau_beta * kron_mvprod2(kern_chol_h, kern_chol_f, to_matrix(z_beta[p], F, H)));
     }
     
     /*** start transformed parameter definitions onecol ***/
     
-    kern_chol_f = cholesky_decompose(kern_func_f(fd, lambdas_{v}[1]) + nugget * I_f);
-    kern_chol_h = cholesky_decompose(kern_func_h(hd, lambdas_{v}[2]) + nugget * I_h);
+    kern_chol_f = cholesky_decompose(kern_func_f(fd, lambda_{v}[1]) + nugget * I_f);
+    kern_chol_h = cholesky_decompose(kern_func_h(hd, lambda_{v}[2]) + nugget * I_h);
     for (l in 1:{nlev}) {{
       {v}[l] = to_row_vector(sigma_{v} * kron_mvprod2(kern_chol_h, kern_chol_f, to_matrix(z_{v}[l], F, H)));
     }}
@@ -168,8 +168,8 @@ transformed parameters {
     
     // sample each column
     for (c in 1:{ncol}) {{
-      kern_chol_f = cholesky_decompose(kern_func_f(fd, lambdas_{v}[1,c]) + nugget * I_f);
-      kern_chol_h = cholesky_decompose(kern_func_h(hd, lambdas_{v}[2,c]) + nugget * I_h);
+      kern_chol_f = cholesky_decompose(kern_func_f(fd, lambda_{v}[1,c]) + nugget * I_f);
+      kern_chol_h = cholesky_decompose(kern_func_h(hd, lambda_{v}[2,c]) + nugget * I_h);
       for (l in 1:{nlev}) {{
         {v}[l][c,] = sigma_{v}[c] * to_row_vector(kron_mvprod2(kern_chol_h, kern_chol_f, to_matrix(z_{v}[l][c,], F, H)));
       }}
@@ -190,28 +190,28 @@ model {
   matrix[N,F*H] log_omega;
   
   // user-level priors on lengthscale
-  lambdas_noise            ~ {prior_lambda_noise};
-  to_vector(lambdas_beta)  ~ {prior_lambdas_beta};
-  to_vector(lambdas_gamma) ~ {prior_lambdas_gamma};
+  lambda_noise            ~ prior_lambda_noise;
+  to_vector(lambda_beta)  ~ prior_lambda_beta;
+  to_vector(lambda_gamma) ~ prior_lambda_gamma;
   Lambda_chol_noise ~ lkj_corr_cholesky(2);
   Lambda_chol_beta  ~ lkj_corr_cholesky(2);
   Lambda_chol_gamma ~ lkj_corr_cholesky(2);
   
   // change-of-variables adjustment
-  target += sum(log_lambdas_noise);
-  target += sum(log_lambdas_beta);
-  target += sum(log_lambdas_gamma);
+  target += sum(log_lambda_noise);
+  target += sum(log_lambda_beta);
+  target += sum(log_lambda_gamma);
   
-  to_vector(z_log_lambdas_noise) ~ normal(0, 1);
-  to_vector(z_log_lambdas_beta)  ~ normal(0, 1);
-  to_vector(z_log_lambdas_gamma) ~ normal(0, 1);
+  to_vector(z_log_lambda_noise) ~ normal(0, 1);
+  to_vector(z_log_lambda_beta)  ~ normal(0, 1);
+  to_vector(z_log_lambda_gamma) ~ normal(0, 1);
   
   offset_eta ~ student_t(3, mean_y, 4);
   
-  tau_gamma ~ {prior_tau_gamma};
-  tau_beta  ~ {prior_tau_beta};
-  tau_sigma ~ {prior_tau_sigma};
-  sigma_noise ~ {prior_sigma_noise};
+  tau_gamma ~ prior_tau_gamma;
+  tau_beta  ~ prior_tau_beta;
+  tau_sigma ~ prior_tau_sigma;
+  sigma_noise ~ prior_sigma_noise;
   
   eta       = X * beta + offset_eta;
   log_omega = W * gamma;
@@ -221,10 +221,10 @@ model {
   
   /*** start model onecol ***/
   
-  sigma_{v}   ~ gamma(2, 1);
-  lambdas_{v} ~ gamma(2, 1);
-  z_log_lambdas_{v} ~ normal(0, 1);
-  target += sum(log_lambdas_{v});
+  sigma_{v}  ~ prior_sigma_{v};
+  lambda_{v} ~ prior_lambda_{v};
+  z_log_lambda_{v} ~ normal(0, 1);
+  target += sum(log_lambda_{v});
   Lambda_chol_{v} ~ lkj_corr_cholesky(2);
   
   to_vector(z_{v}) ~ normal(0, 1);
@@ -233,10 +233,10 @@ model {
   /*** end model onecol ***/
   /*** start model multicol ***/
   
-  sigma_{v} ~ gamma(2, 1);
-  to_vector(lambdas_{v}) ~ gamma(2, 1);
-  to_vector(z_log_lambdas_{v}) ~ normal(0, 1);
-  target += sum(log_lambdas_{v});
+  sigma_{v} ~ prior_sigma_{v};
+  to_vector(lambda_{v}) ~ prior_lambda_{v};
+  to_vector(z_log_lambda_{v}) ~ normal(0, 1);
+  target += sum(log_lambda_{v});
   Lambda_chol_{v} ~ lkj_corr_cholesky(2);
   
   chol_corr_{v} ~ lkj_corr_cholesky(2);
@@ -249,8 +249,8 @@ model {
   
   // calculate residuals (structured)
   {
-    matrix[F,F] kern_f = tau_sigma^2 * kern_func_f(fd, lambdas_noise[1]) + nugget * I_f;
-    matrix[H,H] kern_h =               kern_func_h(hd, lambdas_noise[2]) + nugget * I_h;
+    matrix[F,F] kern_f = tau_sigma^2 * kern_func_f(fd, lambda_noise[1]) + nugget * I_f;
+    matrix[H,H] kern_h =               kern_func_h(hd, lambda_noise[2]) + nugget * I_h;
     matrix[F,F] Qf = eigenvectors_sym(kern_f);
     matrix[H,H] Qh = eigenvectors_sym(kern_h);
     vector[F] Lf = eigenvalues_sym(kern_f);
@@ -271,20 +271,20 @@ model {
 }
 
 generated quantities {
-  real lambdas_rho_beta  = multiply_lower_tri_self_transpose(Lambda_chol_beta )[1, 2];
-  real lambdas_rho_gamma = multiply_lower_tri_self_transpose(Lambda_chol_gamma)[1, 2];
-  real lambdas_rho_noise = multiply_lower_tri_self_transpose(Lambda_chol_noise)[1, 2];
+  real lambda_rho_beta  = multiply_lower_tri_self_transpose(Lambda_chol_beta )[1, 2];
+  real lambda_rho_gamma = multiply_lower_tri_self_transpose(Lambda_chol_gamma)[1, 2];
+  real lambda_rho_noise = multiply_lower_tri_self_transpose(Lambda_chol_noise)[1, 2];
   vector[F*H] noise;
   
   /*** start generated quantities declarations onecol ***/
   
-  real lambdas_rho_{v} = multiply_lower_tri_self_transpose(Lambda_chol_{v})[1, 2];
+  real lambda_rho_{v} = multiply_lower_tri_self_transpose(Lambda_chol_{v})[1, 2];
   vector[F*H] new_{v};
 
   /*** end generated quantities declarations onecol ***/
   /*** start generated quantities declarations multicol ***/
   
-  real lambdas_rho_{v} = multiply_lower_tri_self_transpose(Lambda_chol_{v})[1, 2];
+  real lambda_rho_{v} = multiply_lower_tri_self_transpose(Lambda_chol_{v})[1, 2];
   matrix[{ncol},F*H] new_{v};
   
   /*** end generated quantities declarations multicol ***/
@@ -295,8 +295,8 @@ generated quantities {
     vector[F*H] new_z;  // for sampling from standard normal
     
     // sample noise for posterior-predictive
-    kern_chol_f = cholesky_decompose(kern_func_f(fd, lambdas_noise[1]) + sigma_noise^2 * I_f);
-    kern_chol_h = cholesky_decompose(kern_func_h(hd, lambdas_noise[2]) + sigma_noise^2 * I_h);
+    kern_chol_f = cholesky_decompose(kern_func_f(fd, lambda_noise[1]) + sigma_noise^2 * I_f);
+    kern_chol_h = cholesky_decompose(kern_func_h(hd, lambda_noise[2]) + sigma_noise^2 * I_h);
     for (i in 1:F*H) {{
       new_z[i] = normal_rng(0, 1);
     }}
@@ -304,8 +304,8 @@ generated quantities {
     
     /*** start generated quantities definitions onecol ***/
     
-    kern_chol_f = cholesky_decompose(kern_func_f(fd, lambdas_{v}[1]) + nugget * I_f);
-    kern_chol_h = cholesky_decompose(kern_func_h(hd, lambdas_{v}[2]) + nugget * I_h);
+    kern_chol_f = cholesky_decompose(kern_func_f(fd, lambda_{v}[1]) + nugget * I_f);
+    kern_chol_h = cholesky_decompose(kern_func_h(hd, lambda_{v}[2]) + nugget * I_h);
     for (i in 1:F*H) {{
       new_z[i] = normal_rng(0, 1);
     }}
@@ -316,8 +316,8 @@ generated quantities {
     
     // sample each column
     for (c in 1:{ncol}) {{
-      kern_chol_f = cholesky_decompose(kern_func_f(fd, lambdas_{v}[1,c]) + nugget * I_f);
-      kern_chol_h = cholesky_decompose(kern_func_h(hd, lambdas_{v}[2,c]) + nugget * I_h);
+      kern_chol_f = cholesky_decompose(kern_func_f(fd, lambda_{v}[1,c]) + nugget * I_f);
+      kern_chol_h = cholesky_decompose(kern_func_h(hd, lambda_{v}[2,c]) + nugget * I_h);
       for (i in 1:F*H) {{
         new_z[i] = normal_rng(0, 1);
       }}

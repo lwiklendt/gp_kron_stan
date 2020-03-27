@@ -54,8 +54,8 @@ transformed data {
 
 parameters {
   real<lower=0> lambda_noise;
-  vector[P] log_lambdas_beta;
-  vector[Q] log_lambdas_gamma;
+  vector[P] log_lambda_beta;
+  vector[Q] log_lambda_gamma;
   
   matrix[F,P] z_beta;
   matrix[F,Q] z_gamma;
@@ -89,8 +89,8 @@ transformed parameters {
   matrix[P,F] beta;
   matrix[Q,F] gamma;
   
-  vector[P] lambdas_beta  = lambda_noise + exp(log_lambdas_beta);
-  vector[Q] lambdas_gamma = lambda_noise + exp(log_lambdas_gamma);
+  vector[P] lambda_beta  = lambda_noise + exp(log_lambda_beta);
+  vector[Q] lambda_gamma = lambda_noise + exp(log_lambda_gamma);
 
   /*** start transformed parameter declarations onecol ***/
   
@@ -109,12 +109,12 @@ transformed parameters {
     matrix[F,F] kern_chol;
     
     for (q in 1:Q) {
-      kern_chol = cholesky_decompose(sqrexp(fd_sqr, lambdas_gamma[q]) + nugget * I);
+      kern_chol = cholesky_decompose(sqrexp(fd_sqr, lambda_gamma[q]) + nugget * I);
       gamma[q,] = tau_gamma * (kern_chol * z_gamma[,q])';
     }
     
     for (p in 1:P) {
-      kern_chol = cholesky_decompose(sqrexp(fd_sqr, lambdas_beta[p]) + nugget * I);
+      kern_chol = cholesky_decompose(sqrexp(fd_sqr, lambda_beta[p]) + nugget * I);
       beta[p,] = tau_beta * (kern_chol * z_beta[,p])';
     }
     
@@ -150,19 +150,19 @@ model {
   matrix[N,F] eta;
   matrix[N,F] log_omega;
   
-  lambda_noise  ~ {prior_lambda_noise};
-  lambdas_gamma ~ {prior_lambdas_gamma};
-  lambdas_beta  ~ {prior_lambdas_beta};
+  lambda_noise ~ prior_lambda_noise;
+  lambda_gamma ~ prior_lambda_gamma;
+  lambda_beta  ~ prior_lambda_beta;
   
   // change-of-variables adjustment
-  target += sum(log_lambdas_beta);
-  target += sum(log_lambdas_gamma);
+  target += sum(log_lambda_beta);
+  target += sum(log_lambda_gamma);
   
   offset_eta ~ student_t(3, mean_y, 4);
-  tau_gamma ~ {prior_tau_gamma};
-  tau_beta  ~ {prior_tau_beta};
-  tau_sigma ~ {prior_tau_sigma};
-  sigma_noise ~ {prior_sigma_noise};
+  tau_gamma ~ prior_tau_gamma;
+  tau_beta  ~ prior_tau_beta;
+  tau_sigma ~ prior_tau_sigma;
+  sigma_noise ~ prior_sigma_noise;
   
   eta = X * beta + offset_eta;
   log_omega = W * gamma;
@@ -172,8 +172,8 @@ model {
   
   /*** start model onecol ***/
   
-  sigma_{v} ~ gamma(2, 1);
-  lambda_{v} ~ gamma(2, 1);
+  sigma_{v} ~ prior_sigma_{v};
+  lambda_{v} ~ prior_lambda_{v};
   target += log_lambda_{v};  // change-of-variables adjustment
   to_vector(z_{v}) ~ normal(0, 1);
   {dpar} += Z_{v} * {v};
@@ -181,8 +181,8 @@ model {
   /*** end model onecol ***/
   /*** start model multicol ***/
   
-  sigma_{v} ~ gamma(2, 1);
-  to_vector(lambda_{v}) ~ gamma(2, 1);
+  sigma_{v} ~ prior_sigma_{v};
+  to_vector(lambda_{v}) ~ prior_lambda_{v};
   target += sum(log_lambda_{v});  // change-of-variables adjustment
   chol_corr_{v} ~ lkj_corr_cholesky(2);
   for (l in 1:{nlev}) {{

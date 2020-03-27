@@ -33,10 +33,10 @@ class GPModel(ABC):
         self.fe_noise_formula  = fe_noise_formula  or '1'
         self.re_noise_formulas = re_noise_formulas or []
 
-        self.priors = priors or dict()
+        self.priors = (priors or dict()).copy()  # priors will be modified, so copy
 
         # set default priors
-        varnames = ['lambda_noise', 'lambdas_gamma', 'lambdas_beta',
+        varnames = ['lambda_noise', 'lambda_gamma', 'lambda_beta',
                     'tau_sigma', 'tau_gamma', 'tau_beta', 'sigma_noise']
         for varname in varnames:
             self.priors[varname] = self.priors.get(varname, 'gamma(2, 1)')
@@ -103,11 +103,19 @@ class GPModel(ABC):
 
         # make random-effect code from blueprints to inject back into template
         syringe = {k: [] for k, _ in locs.items()}
+        prior_varnames = ['lambda', 'sigma']
         for zs, dpar, pre_vname in [(self.zs, 'eta', 'mu'), (self.us, 'log_omega', 'noise')]:
             for ti, (z, term) in enumerate(zs, 1):
 
                 v = f'{pre_vname}_b{ti}'  # variable name
                 nlev, _, ncol = z.shape   # num levels and columns in the random-effect design matrix
+
+                # add default priors for specific terms
+                for varname in prior_varnames:
+                    prior_name_generic = f'{varname}_{pre_vname}_'
+                    prior_name_specific = f'{prior_name_generic}b{ti}'
+                    if prior_name_specific not in self.priors:
+                        self.priors[prior_name_specific] = self.priors.get(prior_name_generic, 'gamma(2, 1)')
 
                 self.params.append(v)
                 self.params += [param.format(v) for param in params_re]
@@ -132,8 +140,15 @@ class GPModel(ABC):
 
         # inject priors
         for varname, prior in self.priors.items():
-            locator = f'{{prior_{varname}}}'
-            self.code = self.code.replace(locator, prior)
+
+            # check if varname represents a generic prior specification, in which case ignore it
+            if varname.endswith('_'):
+                continue
+
+            locator = f'prior_{varname}'
+            if locator not in self.code:
+                raise RuntimeError(f'unknown prior key: {varname}')
+            self.code = self.code.replace(locator + ';', prior + ';')
 
     def __str__(self):
         s = ''
@@ -172,7 +187,7 @@ class GPModel(ABC):
 
     @classmethod
     def get_params_fe(cls) -> List[str]:
-        return ['beta', 'gamma', 'offset_eta', 'sigma_noise', 'lambdas_beta', 'lambdas_gamma',
+        return ['beta', 'gamma', 'offset_eta', 'sigma_noise', 'lambda_beta', 'lambda_gamma',
                 'tau_beta', 'tau_gamma', 'tau_sigma', 'noise']
 
     @classmethod
@@ -567,7 +582,7 @@ class GPFreqModel(GPModel):
         def sqr_exp_kernel(s, l, x1, x2):
             return s**2 * np.exp(-0.5 * ((x1 - x2) / l)**2)
 
-        lengthscales_x = dict(beta=samples['lambdas_beta'], gamma=samples['lambdas_gamma'])
+        lengthscales_x = dict(beta=samples['lambda_beta'], gamma=samples['lambda_gamma'])
         nsamples = len(lengthscales_x['beta'])
         nx_star = len(x_star)
 
@@ -675,11 +690,11 @@ class GPFreqPhaseModel(GPModel):
 
     @classmethod
     def get_params_fe(cls):
-        return super().get_params_fe() + ['lambdas_noise', 'lambdas_rho_beta', 'lambdas_rho_gamma', 'lambdas_rho_noise']
+        return super().get_params_fe() + ['lambda_noise', 'lambda_rho_beta', 'lambda_rho_gamma', 'lambda_rho_noise']
 
     @classmethod
     def get_params_re(cls):
-        return ['sigma_{}', 'lambdas_{}', 'lambdas_rho_{}', 'new_{}']
+        return ['sigma_{}', 'lambda_{}', 'lambda_rho_{}', 'new_{}']
 
     def set_data(self, y, **kwargs):
         freqs = kwargs['freqs']
@@ -856,8 +871,8 @@ class GPFreqPhaseModel(GPModel):
         def periodic_sqr_exp_kernel(s, l, w1, w2):
             return s**2 * np.exp(-2 * np.sin(0.5 * np.abs(w1 - w2))**2 / l**2)
 
-        lengthscales_x = dict(beta=samples['lambdas_beta'][:, 0], gamma=samples['lambdas_gamma'][:, 0])
-        lengthscales_w = dict(beta=samples['lambdas_beta'][:, 1], gamma=samples['lambdas_gamma'][:, 1])
+        lengthscales_x = dict(beta=samples['lambda_beta'][:, 0], gamma=samples['lambda_gamma'][:, 0])
+        lengthscales_w = dict(beta=samples['lambda_beta'][:, 1], gamma=samples['lambda_gamma'][:, 1])
         # sigma_noise = samples['sigma_noise']
         nsamples = len(lengthscales_x['beta'])
         nx_star = len(x_star)
