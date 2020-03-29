@@ -35,6 +35,9 @@ class GPModel(ABC):
 
         self.priors = (priors or dict()).copy()  # priors will be modified, so copy
 
+        # init variables that will hold frequencies once set_data is called
+        self.freqs = None
+
         # set default priors
         varnames = ['lambda_noise', 'lambda_gamma', 'lambda_beta',
                     'tau_sigma', 'tau_gamma', 'tau_beta', 'sigma_noise']
@@ -517,15 +520,71 @@ class GPModel(ABC):
         fig.tight_layout()
         return fig
 
+    def plot_coeffs(self, samples, outpath):
+
+        # model.freqs is on the log2 scale
+        if self.freqs is None:
+            raise RuntimeError('set_data must be called on model before calling plot_coeffs')
+        freqs_cpm = 2 ** self.freqs
+
+        # plot betas
+        fig = self.plot(freqs_cpm, samples['beta'], self.fe_mu_coeffs, offset_eta=samples['offset_eta'])
+        fig.savefig(outpath / 'beta.png', dpi=150)
+        plt.close(fig)
+
+        # plot gamma
+        fig = self.plot(freqs_cpm, samples['gamma'], self.fe_noise_coeffs)
+        fig.savefig(outpath / 'gamma.png', dpi=150)
+        plt.close(fig)
+
+        # plot mu random effects
+        if len(self.re_mu_formulas) > 0:
+            print(f'Plotting random-effects mu')
+        for ri, re_formula in enumerate(self.re_mu_formulas):
+            b = samples[f'mu_b{ri + 1}']
+            label = re_formula.split('|')[-1].strip()
+
+            coeffs = simplify_patsy_column_names(self.re_mu_coeffs[re_formula])
+            levels = simplify_patsy_column_names(self.re_mu_levels[re_formula])
+
+            print(f'  {re_formula}: {coeffs}')
+
+            for ci, coeff in enumerate(coeffs):
+                if len(coeffs) > 1:
+                    b_coeff = b[:, :, ci, :]
+                else:
+                    b_coeff = b
+                fig = self.plot(freqs_cpm, b_coeff, levels)
+                fig.savefig(outpath / f'mu_{label}_{coeff}.png', dpi=150)
+                plt.close(fig)
+
+        # plot noise random effects
+        if len(self.re_noise_formulas) > 0:
+            print(f'Plot random-effects noise:')
+        for ri, re_formula in enumerate(self.re_noise_formulas):
+            b = samples[f'noise_b{ri + 1}']
+            label = re_formula.split('|')[-1].strip()
+
+            coeffs = simplify_patsy_column_names(self.re_noise_coeffs[re_formula])
+            levels = simplify_patsy_column_names(self.re_noise_levels[re_formula])
+
+            print(f'  {re_formula}: {coeffs}')
+
+            for ci, coeff in enumerate(coeffs):
+                if len(coeffs) > 1:
+                    b_coeff = b[:, :, ci, :]
+                else:
+                    b_coeff = b
+                fig = self.plot(freqs_cpm, b_coeff, levels)
+                fig.savefig(outpath / f'noise_{label}_{coeff}.png', dpi=150)
+                plt.close(fig)
+
 
 class GPFreqModel(GPModel):
 
     def __init__(self, df, fe_mu_formula=None, re_mu_formulas=None, fe_noise_formula=None, re_noise_formulas=None,
                  priors=None):
         super().__init__(df, fe_mu_formula, re_mu_formulas, fe_noise_formula, re_noise_formulas, priors)
-
-        # init variables that will hold frequencies once set_data is called
-        self.freqs = None
 
     @classmethod
     def get_template(cls):
@@ -677,8 +736,7 @@ class GPFreqPhaseModel(GPModel):
         super().__init__(df, fe_mu_formula, re_mu_formulas, fe_noise_formula, re_noise_formulas, priors)
         self.sep = sep
 
-        # init variables that will hold frequencies and phases once set_data is called
-        self.freqs = None
+        # init variable that will hold phases once set_data is called
         self.phases = None
 
     @classmethod
