@@ -205,6 +205,10 @@ class GPModel(ABC):
     def _plot_axes(self, ax, samples, freq_cpm, icpt=False, vmin=None, vmax=None, alpha=0.05, value_label=None):
         pass
 
+    @abstractmethod
+    def interp_samples_subdivide(self, samples, subdivision):
+        pass
+
     def sample(self, outpath, ignore_data_change=False, **kwargs):
 
         if not os.path.exists(outpath):
@@ -609,8 +613,6 @@ class GPFreqModel(GPModel):
 
         self.freqs = freqs
 
-        # TODO add priors
-
     @classmethod
     def _interp(cls, x, x_star, y, per_sample_kernel_func_x, nugget_size=1e-6):
 
@@ -670,6 +672,13 @@ class GPFreqModel(GPModel):
                 samples_star[key] = samples[key].copy()
 
         return samples_star
+
+    def interp_samples_subdivide(self, samples, subdivision: int):
+        log2_freqs_cpm = self.freqs
+        nfreq = len(log2_freqs_cpm)
+        log2_freqs_cpm_subdiv = np.linspace(log2_freqs_cpm[0], log2_freqs_cpm[-1], (nfreq - 1) * subdivision + 1)
+        samples_subdiv = self.interp_samples(samples, log2_freqs_cpm, log2_freqs_cpm_subdiv)
+        return samples_subdiv, log2_freqs_cpm_subdiv
 
     def _plot_axes(self, ax, samples, freq_cpm, icpt=False, vmin=None, vmax=None, alpha=0.05, value_label=None):
 
@@ -965,6 +974,23 @@ class GPFreqPhaseModel(GPModel):
                 samples_star[key] = samples[key].copy()
 
         return samples_star
+
+    def interp_samples_subdivide(self, samples, subdivision):
+
+        # subdivide frequencies
+        log2_freqs_cpm = self.freqs
+        nfreq = len(log2_freqs_cpm)
+        log2_freqs_cpm_subdiv = np.linspace(log2_freqs_cpm[0], log2_freqs_cpm[-1], (nfreq - 1) * subdivision + 1)
+
+        # subdivide phases
+        phases = self.phases
+        nphase = len(phases)
+        phase_edges = centers_to_edges(phases)
+        phase_edges_subdiv = np.linspace(phase_edges[0], phase_edges[-1], nphase * 2)
+        phases_subdiv = edges_to_centers(phase_edges_subdiv)
+
+        samples_subdiv = self.interp_samples(samples, log2_freqs_cpm, phases, log2_freqs_cpm_subdiv, phases_subdiv)
+        return samples_subdiv, log2_freqs_cpm_subdiv
 
 
 def make_design_matrices(df, fe_formula=None, re_formulas=None):
