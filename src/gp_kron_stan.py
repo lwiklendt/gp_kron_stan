@@ -785,8 +785,7 @@ class GPFreqPhaseModel(GPModel):
 
         nphase = samples.shape[1]
         phase_edges = np.linspace(-np.pi, np.pi, nphase + 1)
-        dphase = phase_edges[1] - phase_edges[0]
-        phases = phase_edges[1:] - 0.5 * dphase
+        phases = edges_to_centers(phase_edges)
 
         # create 1x3 periodic grid so that contours are drawn correctly
         phases_1x3 = periodic_coord_wings(phases)
@@ -986,7 +985,7 @@ class GPFreqPhaseModel(GPModel):
         phases = self.phases
         nphase = len(phases)
         phase_edges = centers_to_edges(phases)
-        phase_edges_subdiv = np.linspace(phase_edges[0], phase_edges[-1], nphase * 2)
+        phase_edges_subdiv = np.linspace(phase_edges[0], phase_edges[-1], nphase * subdivision)
         phases_subdiv = edges_to_centers(phase_edges_subdiv)
 
         samples_subdiv = self.interp_samples(samples, log2_freqs_cpm, phases, log2_freqs_cpm_subdiv, phases_subdiv)
