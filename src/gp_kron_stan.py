@@ -408,7 +408,26 @@ class GPModel(ABC):
             return np.einsum('ska, k -> sa', samples, dmat_predict)
 
     def plot(self, freq_cpm, decs, eqns, titles=None, icpt_tx=None, diff_tx=None, alpha=0.05, simplify_coeffs=True,
-             icpt_value_label=None, diff_value_label=None, offset_eta=None):
+             icpt_value_label=None, diff_value_label='Ratio', offset_eta=None, force_diff=False):
+        """
+        Plot results.
+        @param freq_cpm: frequency in log2 cpm.
+        @param decs: either coefficients such as samples['beta'] or samples['gamma'], or a dict str->samples containing
+                     named variables that are accessed by the equations in eqns.
+        @param eqns: list of lists specifying a row-major matrix of equations as str, where variables' values are
+                     looked up in the decs parameter, where each equation is plotted on a single axes.
+        @param titles: list of lists of the same size as eqns, specifying the titles of the axes specified in eqns.
+        @param icpt_tx: intercept transform, for example, if log responses are used can be np.exp to transform back.
+        @param diff_tx: comparison transform. Note: by default the identity is used where a non-intercept equation
+                        is considered a difference on the log-scale, and thus a ratio is plotted.
+        @param alpha: value for plotting "significant" contours or band lines.
+        @param simplify_coeffs: whether change the name of coefficients to be more human readable.
+        @param icpt_value_label: axis label referring to intercept-based values.
+        @param diff_value_label: axis label referring to comparison-based values, defaults to "Ratio".
+        @param offset_eta: only supply if decs doesn't contain samples from fit, which already include offset_eta.
+        @param force_diff: whether to force considering all values as comparisons.
+        @return: matplotlib figure
+        """
 
         # default transforms are identities
         icpt_tx = icpt_tx or (lambda x: x)
@@ -443,7 +462,10 @@ class GPModel(ABC):
             eqns = to_grid_list(eqns)
 
         # test for 1d or 2d data
-        if next(iter(decs.values())).shape[-1] == len(freq_cpm):
+        # Note: 2d freq-phase is flattenend into shape (nsamples, nfreq * nphase),
+        #       but freq_freq is (nsamples, nfreq, nfreq)
+        samples0 = next(iter(decs.values()))
+        if samples0.shape[-1] == len(freq_cpm) and len(samples0.shape) == 2:
             extrema_func = lambda x: x
         else:
             extrema_func = lambda x: np.median(x, axis=0)
@@ -451,7 +473,7 @@ class GPModel(ABC):
         nrows = len(eqns)
         ncols = max(map(len, eqns))
 
-        fig = plt.figure(figsize=(ncols * 3.7, nrows * 2.9))
+        fig = plt.figure(figsize=(ncols * 4.2, nrows * 3.35))
         gs = gridspec.GridSpec(nrows, ncols)
 
         # TODO too memory intensive, don't cache samples, recompute each time?
@@ -467,11 +489,14 @@ class GPModel(ABC):
                 if cell_eqn is None or cell_eqn.strip() == '':
                     continue
 
-                # identify intercept vs diff
-                if is_marginal:
-                    is_icpt = cell_eqn == 'Intercept'
+                if force_diff:
+                    is_icpt = False
                 else:
-                    is_icpt = ('-' not in cell_eqn)
+                    # identify intercept vs diff
+                    if is_marginal:
+                        is_icpt = cell_eqn == 'Intercept'
+                    else:
+                        is_icpt = ('-' not in cell_eqn)
 
                 samples_cond = eval(cell_eqn, {}, decs)
 
@@ -493,7 +518,6 @@ class GPModel(ABC):
                 ax = fig.add_subplot(gs[ri, ci])
                 ax.set_title(cell_eqn if titles is None else titles[ri][ci])
 
-                # cells.append((ax, samples_cond, is_icpt))
                 cells.append((ax, (cell_eqn, decs), is_icpt))
 
         diff_extrema = max(abs(diff_min), abs(diff_max))
@@ -694,48 +718,108 @@ class GPFreqModel(GPModel):
 
         lower = 100 * (0.5 * alpha)
         upper = 100 * (1 - 0.5 * alpha)
-        mu_ci = np.array([np.percentile(samples, q, axis=0) for q in (lower, upper)])
 
-        facecolor_value = mcolors.rgb_to_hsv(ax.get_facecolor()[:3])[-1]
-        if facecolor_value > 0.5:
-            linecolor = 'k'
-        else:
-            linecolor = 'w'
-        ax.plot(log2_freqs_cpm, mu_ci.T, c=linecolor, ls=':', zorder=40)
-        ax.plot(log2_freqs_cpm, samples.T, c=linecolor, lw=0.5, alpha=0.01, zorder=20)
+        # if we have 3 dimensions then it is a freq-freq comparison
+        if len(samples.shape) == 3:
 
-        if not icpt:
-            ax.axhline(0, c=(1, 0, 0), zorder=50)
+            cdict = dict(
+                blue =[(0, 0, 0.5), (0.25, 1  , 1  ), (0.5, 1, 1), (0.75, 0  , 0  ), (1, 0  , 0)],
+                green=[(0, 0, 0  ), (0.25, 0.4, 0.4), (0.5, 1, 1), (0.75, 0.4, 0.4), (1, 0  , 0)],
+                red  =[(0, 0, 0  ), (0.25, 0  , 0  ), (0.5, 1, 1), (0.75, 1  , 1  ), (1, 0.5, 0)],
+            )
+            cmap_diff = mcolors.LinearSegmentedColormap('RedBlue', cdict, N=501)
 
-        ax.set_xlabel('Frequency (cpm)')
-        ax.set_ylabel(value_label)
+            xegrid, yegrid = edge_meshgrid(log2_freqs_cpm, log2_freqs_cpm)  # for pcolormesh
+            xcgrid, ycgrid = np.meshgrid(log2_freqs_cpm, log2_freqs_cpm)    # for contour
 
-        # ratio ticks
-        if not icpt:
+            level = 1 - 0.5 * alpha
+            samples_pos = np.mean(samples > 0, axis=0)
+            samples_neg = np.mean(samples < 0, axis=0)
+            samples = np.median(samples, axis=0)
+            samples[(samples_pos < level) & (samples_neg < level)] = 0
+
+            mappable = ax.pcolormesh(xegrid, yegrid, samples.T, vmin=vmin, vmax=vmax, cmap=cmap_diff)
+            cbar = ax.get_figure().colorbar(mappable, use_gridspec=True, label=value_label)
+
+            kwargs = dict(colors='k', linewidths=1, levels=[level])
+            if np.min(samples_pos) < level < np.max(samples_pos):
+                ax.contour(xcgrid, ycgrid, samples_pos.T, linestyles='-', **kwargs)
+            if np.min(samples_neg) < level < np.max(samples_neg):
+                ax.contour(xcgrid, ycgrid, samples_neg.T, linestyles='-', **kwargs)
+
+            # colorbar ticks
             log2_vmax = np.log2(np.exp(vmax))
 
             # logarithmically-spaced ticks
-            if log2_vmax > 2:
-                ticks = np.arange(0, np.ceil(log2_vmax) + 1)
-                ticks = np.r_[-ticks[1:][::-1], ticks]
-                ticklabels = [f'{2**v:g}' if v >= 0 else f'{2**-v:g}⁻¹' for v in ticks]
-                ticks = np.log(2**ticks)
+            if log2_vmax > 1:
+                cbar_ticks = np.arange(0, np.ceil(log2_vmax) + 1)
+                cbar_ticks = np.r_[-cbar_ticks[1:][::-1], cbar_ticks]
+                cbar_ticklabels = [f'{2 ** v:g}' if v >= 0 else f'{2 ** -v:g}⁻¹' for v in cbar_ticks]
+                cbar_ticks = np.log(2 ** cbar_ticks)
 
             # linearly-spaced ticks
             else:
                 ticker = mticker.MaxNLocator(nbins=5, steps=[1, 2, 5, 10])
-                ticks = np.log2(np.array(ticker.tick_values(1, np.exp(vmax))))
-                ticks = np.r_[-ticks[1:][::-1], ticks]
-                ticklabels = [f'{2**v:g}' if v >= 0 else f'{2**-v:g}⁻¹' for v in ticks]
-                ticks = np.log(2**ticks)
+                cbar_ticks = np.log2(np.array(ticker.tick_values(1, np.exp(vmax))))
+                cbar_ticks = np.r_[-cbar_ticks[1:][::-1], cbar_ticks]
+                cbar_ticklabels = [f'{2 ** v:g}' if v >= 0 else f'{2 ** -v:g}⁻¹' for v in cbar_ticks]
+                cbar_ticks = np.log(2 ** cbar_ticks)
 
-            ax.set_yticks(ticks)
-            ax.set_yticklabels(ticklabels)
+            cbar.set_ticks(cbar_ticks)
+            cbar.set_ticklabels(cbar_ticklabels)
 
-        ax.set_ylim(vmin, vmax)
+            ax.set_xlabel('Frequency (cpm) [X]')
+            ax.set_ylabel('Frequency (cpm) [Y]')
+            ax.set_xticks(freq_ticks)
+            ax.set_xticklabels(freq_labels)
+            ax.set_yticks(freq_ticks)
+            ax.set_yticklabels(freq_labels)
 
-        ax.set_xticks(freq_ticks)
-        ax.set_xticklabels(freq_labels)
+        # otherwise just a normal amplitude over frequency plot
+        else:
+
+            mu_ci = np.array([np.percentile(samples, q, axis=0) for q in (lower, upper)])
+
+            facecolor_value = mcolors.rgb_to_hsv(ax.get_facecolor()[:3])[-1]
+            if facecolor_value > 0.5:
+                linecolor = 'k'
+            else:
+                linecolor = 'w'
+            ax.plot(log2_freqs_cpm, mu_ci.T, c=linecolor, ls=':', zorder=40)
+            ax.plot(log2_freqs_cpm, samples.T, c=linecolor, lw=0.5, alpha=0.01, zorder=20)
+
+            if not icpt:
+                ax.axhline(0, c=(1, 0, 0), zorder=50)
+
+            ax.set_xlabel('Frequency (cpm)')
+            ax.set_ylabel(value_label)
+
+            # ratio ticks
+            if not icpt:
+                log2_vmax = np.log2(np.exp(vmax))
+
+                # logarithmically-spaced ticks
+                if log2_vmax > 2:
+                    ticks = np.arange(0, np.ceil(log2_vmax) + 1)
+                    ticks = np.r_[-ticks[1:][::-1], ticks]
+                    ticklabels = [f'{2**v:g}' if v >= 0 else f'{2**-v:g}⁻¹' for v in ticks]
+                    ticks = np.log(2**ticks)
+
+                # linearly-spaced ticks
+                else:
+                    ticker = mticker.MaxNLocator(nbins=5, steps=[1, 2, 5, 10])
+                    ticks = np.log2(np.array(ticker.tick_values(1, np.exp(vmax))))
+                    ticks = np.r_[-ticks[1:][::-1], ticks]
+                    ticklabels = [f'{2**v:g}' if v >= 0 else f'{2**-v:g}⁻¹' for v in ticks]
+                    ticks = np.log(2**ticks)
+
+                ax.set_yticks(ticks)
+                ax.set_yticklabels(ticklabels)
+
+            ax.set_ylim(vmin, vmax)
+
+            ax.set_xticks(freq_ticks)
+            ax.set_xticklabels(freq_labels)
 
 
 class GPFreqPhaseModel(GPModel):
@@ -874,9 +958,9 @@ class GPFreqPhaseModel(GPModel):
             if np.min(samples_pos) < level < np.max(samples_pos):
                 ax.contour(hcgrid, fcgrid, tile_1x3(samples_pos).T, linestyles='-', **kwargs)
             if np.min(samples_neg) < level < np.max(samples_neg):
-                ax.contour(hcgrid, fcgrid, tile_1x3(samples_neg).T, linestyles='--', **kwargs)
+                ax.contour(hcgrid, fcgrid, tile_1x3(samples_neg).T, linestyles='-', **kwargs)
 
-        # plot contours at alpha for diff
+        # plot contours at alpha for mirror diff
         if icpt:
             # if intercept, then only care about plotting which direction has higher values
             samples_diff_extreme = np.mean((samples - samples[:, ::-1, :]) > 0, axis=0)
