@@ -465,7 +465,8 @@ class GPModel(ABC):
         # Note: 2d freq-phase is flattenend into shape (nsamples, nfreq * nphase),
         #       but freq_freq is (nsamples, nfreq, nfreq)
         samples0 = next(iter(decs.values()))
-        if samples0.shape[-1] == len(freq_cpm) and len(samples0.shape) == 2:
+        is_1d = samples0.shape[-1] == len(freq_cpm) and len(samples0.shape) == 2
+        if is_1d:
             extrema_func = lambda x: x
         else:
             extrema_func = lambda x: np.median(x, axis=0)
@@ -473,7 +474,8 @@ class GPModel(ABC):
         nrows = len(eqns)
         ncols = max(map(len, eqns))
 
-        fig = plt.figure(figsize=(ncols * 4.2, nrows * 3.35))
+        col_width = 3.5 if is_1d else 4.2
+        fig = plt.figure(figsize=(ncols * col_width, nrows * 3.35))
         gs = gridspec.GridSpec(nrows, ncols)
 
         # TODO too memory intensive, don't cache samples, recompute each time?
@@ -785,14 +787,14 @@ class GPFreqModel(GPModel):
                 linecolor = 'k'
             else:
                 linecolor = 'w'
-            ax.plot(log2_freqs_cpm, mu_ci.T, c=linecolor, ls=':', zorder=40)
-            ax.plot(log2_freqs_cpm, samples.T, c=linecolor, lw=0.5, alpha=0.01, zorder=20)
+            ax.plot(mu_ci.T, log2_freqs_cpm, c=linecolor, ls=':', zorder=40)
+            ax.plot(samples.T, log2_freqs_cpm, c=linecolor, lw=0.5, alpha=0.01, zorder=20)
 
             if not icpt:
-                ax.axhline(0, c=(1, 0, 0), zorder=50)
+                ax.axvline(0, c=(1, 0, 0), zorder=50)
 
-            ax.set_xlabel('Frequency (cpm)')
-            ax.set_ylabel(value_label)
+            ax.set_xlabel(value_label)
+            ax.set_ylabel('Frequency (cpm)')
 
             # ratio ticks
             if not icpt:
@@ -813,13 +815,13 @@ class GPFreqModel(GPModel):
                     ticklabels = [f'{2**v:g}' if v >= 0 else f'{2**-v:g}⁻¹' for v in ticks]
                     ticks = np.log(2**ticks)
 
-                ax.set_yticks(ticks)
-                ax.set_yticklabels(ticklabels)
+                ax.set_xticks(ticks)
+                ax.set_xticklabels(ticklabels)
 
-            ax.set_ylim(vmin, vmax)
+            ax.set_xlim(vmin, vmax)
 
-            ax.set_xticks(freq_ticks)
-            ax.set_xticklabels(freq_labels)
+            ax.set_yticks(freq_ticks)
+            ax.set_yticklabels(freq_labels)
 
 
 class GPFreqPhaseModel(GPModel):
