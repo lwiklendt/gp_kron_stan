@@ -408,7 +408,8 @@ class GPModel(ABC):
             return np.einsum('ska, k -> sa', samples, dmat_predict)
 
     def plot(self, freq_cpm, decs, eqns, titles=None, icpt_tx=None, diff_tx=None, alpha=0.05, simplify_coeffs=True,
-             icpt_value_label=None, diff_value_label='Ratio', offset_eta=None, force_diff=False):
+             icpt_value_label=None, diff_value_label='Ratio', offset_eta=None, force_diff=False,
+             col_width=None, row_height=None):
         """
         Plot results.
         @param freq_cpm: frequency in log2 cpm.
@@ -426,6 +427,8 @@ class GPModel(ABC):
         @param diff_value_label: axis label referring to comparison-based values, defaults to "Ratio".
         @param offset_eta: only supply if decs doesn't contain samples from fit, which already include offset_eta.
         @param force_diff: whether to force considering all values as comparisons.
+        @param col_width: width in inches per column, or None for the default of 3.5 for 1d and 4.2 for 2d plots.
+        @param row_height: height in inches per row, or None for the default of 3.35.
         @return: matplotlib figure
         """
 
@@ -474,8 +477,9 @@ class GPModel(ABC):
         nrows = len(eqns)
         ncols = max(map(len, eqns))
 
-        col_width = 3.5 if is_1d else 4.2
-        fig = plt.figure(figsize=(ncols * col_width, nrows * 3.35))
+        col_width = col_width or (3.5 if is_1d else 4.2)
+        row_height = row_height or 3.35
+        fig = plt.figure(figsize=(ncols * col_width, nrows * row_height))
         gs = gridspec.GridSpec(nrows, ncols)
 
         # TODO too memory intensive, don't cache samples, recompute each time?
@@ -800,23 +804,24 @@ class GPFreqModel(GPModel):
             if not icpt:
                 log2_vmax = np.log2(np.exp(vmax))
 
-                # logarithmically-spaced ticks
                 if log2_vmax > 2:
-                    ticks = np.arange(0, np.ceil(log2_vmax) + 1)
-                    ticks = np.r_[-ticks[1:][::-1], ticks]
-                    ticklabels = [f'{2**v:g}' if v >= 0 else f'{2**-v:g}⁻¹' for v in ticks]
-                    ticks = np.log(2**ticks)
 
-                # linearly-spaced ticks
+                    def fmt_func_log2(tick, _):
+                        if tick < 0:
+                            return f'{2**-tick:g}⁻¹'
+                        else:
+                            return f'{2**tick:g}'
+
+                    ax.xaxis.set_major_locator(mticker.MultipleLocator(1))
+                    ax.xaxis.set_major_formatter(mticker.FuncFormatter(fmt_func_log2))
                 else:
                     ticker = mticker.MaxNLocator(nbins=5, steps=[1, 2, 5, 10])
                     ticks = np.log2(np.array(ticker.tick_values(1, np.exp(vmax))))
                     ticks = np.r_[-ticks[1:][::-1], ticks]
                     ticklabels = [f'{2**v:g}' if v >= 0 else f'{2**-v:g}⁻¹' for v in ticks]
                     ticks = np.log(2**ticks)
-
-                ax.set_xticks(ticks)
-                ax.set_xticklabels(ticklabels)
+                    ax.set_xticks(ticks)
+                    ax.set_xticklabels(ticklabels)
 
             ax.set_xlim(vmin, vmax)
 
