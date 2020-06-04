@@ -952,20 +952,18 @@ class GPFreqPhaseModel(GPModel):
                 ax.plot(-vel_phases, vel_freqs, c='w', lw=1, ls=':', alpha=0.5)
 
         # plot contours at alpha
-        level = 1 - 0.5 * alpha
+        levels = [0.5 * alpha, 1 - 0.5 * alpha]
         if not icpt:
             samples_pos = np.mean(samples > 0, axis=0)
-            samples_neg = np.mean(samples < 0, axis=0)
             # make padded boundary below contours
             samples_pos[:,  0] = 0.5
             samples_pos[:, -1] = 0.5
-            samples_neg[:,  0] = 0.5
-            samples_neg[:, -1] = 0.5
-            kwargs = dict(colors='w', linewidths=2, levels=[level])
-            if np.min(samples_pos) < level < np.max(samples_pos):
-                ax.contour(hcgrid, fcgrid, tile_1x3(samples_pos).T, linestyles='-', **kwargs)
-            if np.min(samples_neg) < level < np.max(samples_neg):
-                ax.contour(hcgrid, fcgrid, tile_1x3(samples_neg).T, linestyles='-', **kwargs)
+            ax.contour(hcgrid, fcgrid, tile_1x3(samples_pos).T,
+                       linestyles='-', levels=levels, linewidths=2, colors='w')
+            cs = ax.contourf(hcgrid, fcgrid, tile_1x3(samples_pos).T, colors='none',
+                             hatches=[None, '////'], levels=levels, extend='both')
+            for c in cs.collections:
+                c.set_edgecolor((1, 1, 1, 0.3))
 
         # plot contours at alpha for mirror diff
         if icpt:
@@ -975,11 +973,11 @@ class GPFreqPhaseModel(GPModel):
             # if diff, then we care about plotting which direction has significantly larger absolute difference
             samples_diff_extreme = np.mean(((samples - samples[:, ::-1, :]) > 0) & (samples > 0) |
                                            ((samples - samples[:, ::-1, :]) < 0) & (samples < 0), axis=0)
-        if np.min(samples_diff_extreme) < level < np.max(samples_diff_extreme):  # only plot if there exists contour
+        if np.min(samples_diff_extreme) < levels[1] < np.max(samples_diff_extreme):  # only plot if there exists contour
             ax.contour(hcgrid, fcgrid, tile_1x3(samples_diff_extreme).T,
-                       linestyles=[(2, (2, 2))], colors='k', linewidths=2, levels=[level])
+                       linestyles=[(2, (2, 2))], colors='k', linewidths=2, levels=[levels[1]])
             ax.contour(hcgrid, fcgrid, tile_1x3(samples_diff_extreme).T,
-                       linestyles=[(0, (2, 2))], colors='w', linewidths=2, levels=[level])
+                       linestyles=[(0, (2, 2))], colors='w', linewidths=2, levels=[levels[1]])
 
         ax.axvline(0, c='w', lw=1, alpha=0.5)
 
