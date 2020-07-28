@@ -990,7 +990,7 @@ class GPFreqPhaseModel(GPModel):
         ax.set_ylim(fegrid[1, 0], fegrid[-2, -1])  # remove freq padding
 
         ax.set_ylabel('Frequency (cpm)')
-        ax.set_xlabel('Phase (radians)')
+        ax.set_xlabel('Phase (rad)')
 
     @classmethod
     def _interp(cls, x, x_star, w, w_star, y, per_sample_kernel_func_x, per_sample_kernel_func_w, nugget_size=1e-6):
