@@ -753,24 +753,7 @@ class GPFreqModel(GPModel):
             if np.min(samples_neg) < level < np.max(samples_neg):
                 ax.contour(xcgrid, ycgrid, samples_neg.T, linestyles='-', **kwargs)
 
-            # colorbar ticks
-            log2_vmax = np.log2(np.exp(vmax))
-
-            # logarithmically-spaced ticks
-            if log2_vmax > 1:
-                cbar_ticks = np.arange(0, np.ceil(log2_vmax) + 1)
-                cbar_ticks = np.r_[-cbar_ticks[1:][::-1], cbar_ticks]
-                cbar_ticklabels = [f'{2 ** v:g}' if v >= 0 else f'{2 ** -v:g}⁻¹' for v in cbar_ticks]
-                cbar_ticks = np.log(2 ** cbar_ticks)
-
-            # linearly-spaced ticks
-            else:
-                ticker = mticker.MaxNLocator(nbins=5, steps=[1, 2, 5, 10])
-                cbar_ticks = np.log2(np.array(ticker.tick_values(1, np.exp(vmax))))
-                cbar_ticks = np.r_[-cbar_ticks[1:][::-1], cbar_ticks]
-                cbar_ticklabels = [f'{2 ** v:g}' if v >= 0 else f'{2 ** -v:g}⁻¹' for v in cbar_ticks]
-                cbar_ticks = np.log(2 ** cbar_ticks)
-
+            cbar_ticks, cbar_ticklabels = log_ticks_for_ratios(vmax)
             cbar.set_ticks(cbar_ticks)
             cbar.set_ticklabels(cbar_ticklabels)
 
@@ -802,26 +785,9 @@ class GPFreqModel(GPModel):
 
             # ratio ticks
             if not icpt:
-                log2_vmax = np.log2(np.exp(vmax))
-
-                if log2_vmax > 2:
-
-                    def fmt_func_log2(tick, _):
-                        if tick < 0:
-                            return f'{2**-tick:g}⁻¹'
-                        else:
-                            return f'{2**tick:g}'
-
-                    ax.xaxis.set_major_locator(mticker.MultipleLocator(1))
-                    ax.xaxis.set_major_formatter(mticker.FuncFormatter(fmt_func_log2))
-                else:
-                    ticker = mticker.MaxNLocator(nbins=5, steps=[1, 2, 5, 10])
-                    ticks = np.log2(np.array(ticker.tick_values(1, np.exp(vmax))))
-                    ticks = np.r_[-ticks[1:][::-1], ticks]
-                    ticklabels = [f'{2**v:g}' if v >= 0 else f'{2**-v:g}⁻¹' for v in ticks]
-                    ticks = np.log(2**ticks)
-                    ax.set_xticks(ticks)
-                    ax.set_xticklabels(ticklabels)
+                ticks, ticklabels = log_ticks_for_ratios(vmax)
+                ax.set_xticks(ticks)
+                ax.set_xticklabels(ticklabels)
 
             ax.set_xlim(vmin, vmax)
 
@@ -921,23 +887,7 @@ class GPFreqPhaseModel(GPModel):
 
         # colorbar ticks
         if not icpt:
-            log2_vmax = np.log2(np.exp(vmax))
-
-            # logarithmically-spaced ticks
-            if log2_vmax > 1:
-                cbar_ticks = np.arange(0, np.ceil(log2_vmax) + 1)
-                cbar_ticks = np.r_[-cbar_ticks[1:][::-1], cbar_ticks]
-                cbar_ticklabels = [f'{2**v:g}' if v >= 0 else f'{2**-v:g}⁻¹' for v in cbar_ticks]
-                cbar_ticks = np.log(2**cbar_ticks)
-
-            # linearly-spaced ticks
-            else:
-                ticker = mticker.MaxNLocator(nbins=5, steps=[1, 2, 5, 10])
-                cbar_ticks = np.log2(np.array(ticker.tick_values(1, np.exp(vmax))))
-                cbar_ticks = np.r_[-cbar_ticks[1:][::-1], cbar_ticks]
-                cbar_ticklabels = [f'{2**v:g}' if v >= 0 else f'{2**-v:g}⁻¹' for v in cbar_ticks]
-                cbar_ticks = np.log(2**cbar_ticks)
-
+            cbar_ticks, cbar_ticklabels = log_ticks_for_ratios(vmax)
             cbar.set_ticks(cbar_ticks)
             cbar.set_ticklabels(cbar_ticklabels)
 
@@ -1079,6 +1029,27 @@ class GPFreqPhaseModel(GPModel):
 
         samples_subdiv = self.interp_samples(samples, log2_freqs_cpm, phases, log2_freqs_cpm_subdiv, phases_subdiv)
         return samples_subdiv, log2_freqs_cpm_subdiv
+
+
+def log_ticks_for_ratios(log_xmax):
+
+    xmax = np.exp(log_xmax)
+    log2_xmax = np.log2(xmax)
+
+    # logarithmically-spaced ticks (will be linear-spaced on a log-scale axis)
+    if log2_xmax > 1:
+        log2_ticks = np.arange(0, np.ceil(log2_xmax) + 1)
+
+    # linearly-spaced ticks (will be log-spaced on a linear-scale axis)
+    else:
+        ticker = mticker.MaxNLocator(nbins=5, steps=[1, 2, 5, 10])
+        log2_ticks = np.log2(np.array(ticker.tick_values(1, xmax)))
+
+    log2_ticks = np.r_[-log2_ticks[1:][::-1], log2_ticks]
+    ticklabels = [f'{2 ** v:g}' if v >= 0 else f'{2 ** -v:g}⁻¹' for v in log2_ticks]
+    log_ticks = np.log(2 ** log2_ticks)
+
+    return log_ticks, ticklabels
 
 
 def make_design_matrices(df, fe_formula=None, re_formulas=None):
