@@ -19,7 +19,6 @@ import matplotlib.ticker as mticker
 import numpy as np
 import scipy.linalg
 import patsy
-import pystan
 
 
 class GPModel(ABC):
@@ -210,6 +209,145 @@ class GPModel(ABC):
         pass
 
     def sample(self, outpath, ignore_data_change=False, **kwargs):
+        # self.sample_pystan(outpath, ignore_data_change, **kwargs)
+        self.sample_cmdstanpy(outpath, ignore_data_change, **kwargs)
+
+    def sample_cmdstanpy(self, outpath, ignore_data_change=False, **kwargs):
+
+        import cmdstanpy
+        cmdstanpy.utils.cxx_toolchain_path()
+
+        if not os.path.exists(outpath):
+            os.makedirs(outpath)
+
+        model_code_filename    = os.path.join(outpath, 'model.stan')
+        samples_cache_filename = os.path.join(outpath, 'samples.pkl')
+        diagnostics_filename   = os.path.join(outpath, 'diagnostics.txt')
+        traces_filename        = os.path.join(outpath, 'traces.png')
+
+        # write out stan source code
+        with open(model_code_filename, 'w') as f:
+            f.write(self.code)
+
+        # compile stan code or use existing exe file
+        stan_model = cmdstanpy.CmdStanModel(stan_file=model_code_filename)
+        exe_digest = _hash_filename(stan_model.exe_file)
+
+        # check if we need to resample, or can load from cache
+        needs_sample = True
+        samples = None
+        dict_digest = lambda d: md5(pickle.dumps(OrderedDict(sorted(d.items())))).hexdigest()
+        data_digest = _hash_dict_with_numpy_arrays(self.stan_input_data)  # dict_digest doesn't seem to always produce the same hash for the same numpy arrays
+        kwargs_digest = dict_digest(kwargs)
+        if samples_cache_filename is not None and os.path.exists(samples_cache_filename):
+            with open(samples_cache_filename, 'rb') as f:
+                cached_data_digest, cached_kwargs_digest, cached_exe_digest, samples = pickle.load(f)
+            data_changed = (not ignore_data_change) & (cached_data_digest != data_digest)
+            kwargs_changed = cached_kwargs_digest != kwargs_digest
+            exe_changed = cached_exe_digest != exe_digest
+            needs_sample = data_changed or kwargs_changed or exe_changed
+            if needs_sample:
+                changes = ['model changed'] if exe_changed else []
+                changes += ['data changed'] if data_changed else []
+                changes += ['stan kwargs changed'] if kwargs_changed else []
+                print(f'{", ".join(changes)}: resampling...')
+
+        if needs_sample:
+
+            # perform sampling
+            timer_start = datetime.datetime.now()
+            print(f'Started MCMC at {timer_start}')
+            # stan_fit = stan_model.sampling(data=self.stan_input_data, pars=self.params, **kwargs)
+            stan_fit = stan_model.sample(data=self.stan_input_data, **kwargs)
+            print(f'Elapsed MCMC {datetime.datetime.now() - timer_start}')
+
+            samples = stan_fit.draws()
+            # samples = stan_fit.extract()
+
+            # TODO ensure shapes match:
+            # beta.shape = (4000, 36, 33)
+            # gamma.shape = (4000, 37, 33)
+            # offset_eta.shape = (4000,)
+            # sigma_noise.shape = (4000,)
+            # lambda_beta.shape = (4000, 36)
+            # lambda_gamma.shape = (4000, 37)
+            # tau_beta.shape = (4000,)
+            # tau_gamma.shape = (4000,)
+            # tau_sigma.shape = (4000,)
+            # noise.shape = (4000, 33)
+            # lambda_noise.shape = (4000,)
+            # mu_b1.shape = (4000, 97, 6, 33)
+            # sigma_mu_b1.shape = (4000, 6)
+            # lambda_mu_b1.shape = (4000, 6)
+            # new_mu_b1.shape = (4000, 6, 33)
+            # chol_corr_mu_b1.shape = (4000, 6, 6)
+            # lp__.shape = (4000,)
+
+            # store diagnostics in samples dict
+            if stan_fit is not None:
+                samples.seed = stan_fit.get_seed()
+                samples.elapsed_time = datetime.datetime.now() - timer_start
+                samples.check_fit = str(stan_fit)
+                samples.check_treedepth = check_treedepth(stan_fit)
+                samples.check_energy = check_energy(stan_fit)
+                samples.check_div = check_div(stan_fit)
+                samples.sampler_params = stan_fit.get_sampler_params()
+                summary = stan_fit.summary()
+                samples.n_eff = summary['summary'][:, summary['summary_colnames'].index('n_eff')]
+                samples.rhat = summary['summary'][:, summary['summary_colnames'].index('Rhat')]
+                print('\n'.join([samples.check_treedepth, samples.check_energy, samples.check_div]))
+
+            # cache samples
+            with open(samples_cache_filename, 'wb') as f:
+                pickle.dump((data_digest, kwargs_digest, code_digest, samples), f, protocol=2)
+
+            # write various meta info
+            with open(diagnostics_filename, 'w') as f:
+                f.write(f'seed: {samples.seed}\n')
+                f.write(f'elapsed_time: {samples.elapsed_time}\n')
+                f.write(f'check_treedepth: {samples.check_treedepth}\n')
+                f.write(f'check_divergences: {samples.check_div}\n\n')
+                f.write(f'check_fit:\n{samples.check_fit}\n')
+
+            # plot parameter traces
+            pars = [p for p in self.params if len(samples[p].shape) < 3]
+            fig = plt.figure(figsize=(12, 2 * len(pars) + 3))
+            gs = gridspec.GridSpec(len(pars) + 2, 2, width_ratios=[5, 1])
+            for i, k in enumerate(pars):
+                ax = fig.add_subplot(gs[i, 0])
+                is_multi = len(samples[k].shape) > 1
+                ax.plot(samples[k], lw=1, alpha=0.6 if is_multi else 0.9)
+                ax.set_ylabel(k)
+                ax = fig.add_subplot(gs[i, 1])
+                if is_multi:
+                    for j in range(samples[k].shape[1]):
+                        ax.hist(samples[k][:, j], bins=30, alpha=0.7)
+                else:
+                    ax.hist(samples[k], bins=50)
+
+            # plot n_eff
+            ax = fig.add_subplot(gs[-2, :])
+            ax.hist(samples.n_eff[np.isfinite(samples.n_eff)], bins=100)
+            ax.set_xlabel('Number of effective samples')
+            ax.set_ylabel('Param Count')
+
+            # plot Rhat
+            ax = fig.add_subplot(gs[-1, :])
+            ax.hist(samples.rhat[np.isfinite(samples.rhat)], bins=100)
+            ax.set_xlabel('Rhat')
+            ax.set_ylabel('Param Count')
+
+            fig.tight_layout()
+            fig.savefig(traces_filename, dpi=150)
+            plt.close(fig)
+
+        print(f'min, max Rhat = {np.nanmin(samples.rhat)}, {np.nanmax(samples.rhat)}')
+
+        return samples, needs_sample
+
+    def sample_pystan(self, outpath, ignore_data_change=False, **kwargs):
+
+        import pystan
 
         if not os.path.exists(outpath):
             os.makedirs(outpath)
@@ -1126,6 +1264,13 @@ def kron_mvprod(ms, v):
     for m in ms[::-1]:
         u = m @ np.reshape(u.T, (m.shape[1], -1))
     return u.T
+
+
+def _hash_filename(filename):
+    m = md5()
+    with open(filename, 'rb') as f:
+        m.update(f.read())
+    return m.hexdigest()
 
 
 def _hash_dict_with_numpy_arrays(d):
