@@ -21,6 +21,10 @@ import scipy.linalg
 import patsy
 
 
+# note: for windows 10 ensure you have a c++ toolchain:
+# > conda install libpython m2w64-toolchain -c msys2
+
+
 class GPModel(ABC):
 
     def __init__(self, df, fe_mu_formula=None, re_mu_formulas=None, fe_noise_formula=None, re_noise_formulas=None,
@@ -107,10 +111,11 @@ class GPModel(ABC):
         syringe = {k: [] for k, _ in locs.items()}
         prior_varnames = ['lambda', 'sigma']
         for zs, dpar, pre_vname in [(self.zs, 'eta', 'mu'), (self.us, 'log_omega', 'noise')]:
-            for ti, (z, term) in enumerate(zs, 1):
+            for ti, (z, l, term) in enumerate(zs, 1):
 
                 v = f'{pre_vname}_b{ti}'  # variable name
-                nlev, _, ncol = z.shape   # num levels and columns in the random-effect design matrix
+                _, ncol = z.shape         # num columns in the random-effect design matrix
+                nlev = l.max()
 
                 # add default priors for specific terms
                 for varname in prior_varnames:
@@ -121,8 +126,9 @@ class GPModel(ABC):
 
                 self.params.append(v)
                 self.params += [param.format(v) for param in params_re]
+                self.stan_input_data[f'l_{v}'] = l
                 if ncol == 1:
-                    self.stan_input_data[f'Z_{v}'] = z[:, :, 0].T
+                    self.stan_input_data[f'Z_{v}'] = z[:, 0].T
                 else:
                     self.stan_input_data[f'Z_{v}'] = z
                     self.params += [f'chol_corr_{v}']
@@ -209,8 +215,9 @@ class GPModel(ABC):
         pass
 
     def sample(self, outpath, ignore_data_change=False, **kwargs):
-        # self.sample_pystan(outpath, ignore_data_change, **kwargs)
-        self.sample_cmdstanpy(outpath, ignore_data_change, **kwargs)
+        return self.sample_pystan(outpath, ignore_data_change, **kwargs)
+        # TODO I just can't get cmdstanpy to work properly, so many errors, where do I even start?!
+        # return self.sample_cmdstanpy(outpath, ignore_data_change, **kwargs)
 
     def sample_cmdstanpy(self, outpath, ignore_data_change=False, **kwargs):
 
@@ -225,12 +232,30 @@ class GPModel(ABC):
         diagnostics_filename   = os.path.join(outpath, 'diagnostics.txt')
         traces_filename        = os.path.join(outpath, 'traces.png')
 
-        # write out stan source code
-        with open(model_code_filename, 'w') as f:
-            f.write(self.code)
+        # load code from file if it exists
+        existing_code = None
+        if os.path.exists(model_code_filename):
+            with open(model_code_filename, 'r') as f:
+                existing_code = f.read()
+
+        # write out stan source code if different to existing code file
+        if existing_code != self.code:
+
+            if existing_code is not None:
+                print('Stan model code is different to the existing version on file (- file, + curr):')
+                # print the diff between cached and current code
+                result = difflib.unified_diff(existing_code.splitlines(), self.code.splitlines(), n=0, lineterm='')
+                print('\n'.join(list(result)[2:]))  # [2:] is to remove the control lines '---' and '+++'
+                print('recompiling...')
+
+            with open(model_code_filename, 'w') as f:
+                f.write(self.code)
 
         # compile stan code or use existing exe file
-        stan_model = cmdstanpy.CmdStanModel(stan_file=model_code_filename)
+        stan_model = cmdstanpy.CmdStanModel(stan_file=model_code_filename,
+                                            cpp_options=None)
+                                            # cpp_options={'STAN_THREADS': True, 'STAN_OPENCL': True,
+                                            #              'OPENCL_PLATFORM_ID': 1, 'OPENCL_DEVICE_ID': 0})
         exe_digest = _hash_filename(stan_model.exe_file)
 
         # check if we need to resample, or can load from cache
@@ -261,53 +286,35 @@ class GPModel(ABC):
             stan_fit = stan_model.sample(data=self.stan_input_data, **kwargs)
             print(f'Elapsed MCMC {datetime.datetime.now() - timer_start}')
 
-            samples = stan_fit.draws()
-            # samples = stan_fit.extract()
-
-            # TODO ensure shapes match:
-            # beta.shape = (4000, 36, 33)
-            # gamma.shape = (4000, 37, 33)
-            # offset_eta.shape = (4000,)
-            # sigma_noise.shape = (4000,)
-            # lambda_beta.shape = (4000, 36)
-            # lambda_gamma.shape = (4000, 37)
-            # tau_beta.shape = (4000,)
-            # tau_gamma.shape = (4000,)
-            # tau_sigma.shape = (4000,)
-            # noise.shape = (4000, 33)
-            # lambda_noise.shape = (4000,)
-            # mu_b1.shape = (4000, 97, 6, 33)
-            # sigma_mu_b1.shape = (4000, 6)
-            # lambda_mu_b1.shape = (4000, 6)
-            # new_mu_b1.shape = (4000, 6, 33)
-            # chol_corr_mu_b1.shape = (4000, 6, 6)
-            # lp__.shape = (4000,)
+            # convert variables into ndarray, similar to pystan
+            dims = stan_fit.stan_variable_dims
+            samples = dict()
+            for k, shape in dims.items():
+                x = stan_fit.stan_variable(k).values
+                if type(shape) is tuple:
+                    samples[k] = x.reshape((-1, ) + shape)
+                else:
+                    samples[k] = x
 
             # store diagnostics in samples dict
             if stan_fit is not None:
-                samples.seed = stan_fit.get_seed()
+                if 'seed' in kwargs:
+                    samples.seed = kwargs['seed']
+                else:
+                    samples.seed = -1
                 samples.elapsed_time = datetime.datetime.now() - timer_start
-                samples.check_fit = str(stan_fit)
-                samples.check_treedepth = check_treedepth(stan_fit)
-                samples.check_energy = check_energy(stan_fit)
-                samples.check_div = check_div(stan_fit)
-                samples.sampler_params = stan_fit.get_sampler_params()
-                summary = stan_fit.summary()
-                samples.n_eff = summary['summary'][:, summary['summary_colnames'].index('n_eff')]
-                samples.rhat = summary['summary'][:, summary['summary_colnames'].index('Rhat')]
-                print('\n'.join([samples.check_treedepth, samples.check_energy, samples.check_div]))
+                samples.diagnostics = stan_fit.diagnose()
+                print(samples.diagnostics)
 
             # cache samples
             with open(samples_cache_filename, 'wb') as f:
-                pickle.dump((data_digest, kwargs_digest, code_digest, samples), f, protocol=2)
+                pickle.dump((data_digest, kwargs_digest, exe_digest, samples), f, protocol=2)
 
             # write various meta info
             with open(diagnostics_filename, 'w') as f:
                 f.write(f'seed: {samples.seed}\n')
                 f.write(f'elapsed_time: {samples.elapsed_time}\n')
-                f.write(f'check_treedepth: {samples.check_treedepth}\n')
-                f.write(f'check_divergences: {samples.check_div}\n\n')
-                f.write(f'check_fit:\n{samples.check_fit}\n')
+                f.write(f'diagnostics: {samples.diagnostics}\n')
 
             # plot parameter traces
             pars = [p for p in self.params if len(samples[p].shape) < 3]
@@ -325,23 +332,9 @@ class GPModel(ABC):
                 else:
                     ax.hist(samples[k], bins=50)
 
-            # plot n_eff
-            ax = fig.add_subplot(gs[-2, :])
-            ax.hist(samples.n_eff[np.isfinite(samples.n_eff)], bins=100)
-            ax.set_xlabel('Number of effective samples')
-            ax.set_ylabel('Param Count')
-
-            # plot Rhat
-            ax = fig.add_subplot(gs[-1, :])
-            ax.hist(samples.rhat[np.isfinite(samples.rhat)], bins=100)
-            ax.set_xlabel('Rhat')
-            ax.set_ylabel('Param Count')
-
             fig.tight_layout()
             fig.savefig(traces_filename, dpi=150)
             plt.close(fig)
-
-        print(f'min, max Rhat = {np.nanmin(samples.rhat)}, {np.nanmax(samples.rhat)}')
 
         return samples, needs_sample
 
@@ -1219,11 +1212,8 @@ def make_design_matrices(df, fe_formula=None, re_formulas=None):
         re_x = np.asarray(re_dmat)
         dmats_re[re_formula] = (re_dmat, factor_dmat)
 
-        # given the NxP re_x design matrix and the NxL factor_x design matrix,
-        # generate an NxPL z matrix where row n is re_x[n,:] (kron) factor_x[n,:], then reshape for Stan
-        z = np.einsum('np,nl->lnp', re_x, factor_x).reshape(factor_x.shape[1], re_x.shape[0], re_x.shape[1])
-
-        zs.append((z, re_formula))
+        _, l_idxs = np.nonzero(factor_x)
+        zs.append((re_x, l_idxs + 1, re_formula))
 
     return x, zs, dmat_fe, dmats_re
 
