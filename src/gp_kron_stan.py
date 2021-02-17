@@ -19,7 +19,10 @@ import matplotlib.ticker as mticker
 import numpy as np
 import scipy.linalg
 import patsy
-import pystan
+
+
+# note: for windows 10 ensure you have a c++ toolchain:
+# > conda install libpython m2w64-toolchain -c msys2
 
 
 class GPModel(ABC):
@@ -108,10 +111,11 @@ class GPModel(ABC):
         syringe = {k: [] for k, _ in locs.items()}
         prior_varnames = ['lambda', 'sigma']
         for zs, dpar, pre_vname in [(self.zs, 'eta', 'mu'), (self.us, 'log_omega', 'noise')]:
-            for ti, (z, term) in enumerate(zs, 1):
+            for ti, (z, l, term) in enumerate(zs, 1):
 
                 v = f'{pre_vname}_b{ti}'  # variable name
-                nlev, _, ncol = z.shape   # num levels and columns in the random-effect design matrix
+                _, ncol = z.shape         # num columns in the random-effect design matrix
+                nlev = l.max()
 
                 # add default priors for specific terms
                 for varname in prior_varnames:
@@ -122,8 +126,9 @@ class GPModel(ABC):
 
                 self.params.append(v)
                 self.params += [param.format(v) for param in params_re]
+                self.stan_input_data[f'l_{v}'] = l
                 if ncol == 1:
-                    self.stan_input_data[f'Z_{v}'] = z[:, :, 0].T
+                    self.stan_input_data[f'Z_{v}'] = z[:, 0].T
                 else:
                     self.stan_input_data[f'Z_{v}'] = z
                     self.params += [f'chol_corr_{v}']
@@ -210,6 +215,132 @@ class GPModel(ABC):
         pass
 
     def sample(self, outpath, ignore_data_change=False, **kwargs):
+        return self.sample_pystan(outpath, ignore_data_change, **kwargs)
+        # TODO I just can't get cmdstanpy to work properly, so many errors, where do I even start?!
+        # return self.sample_cmdstanpy(outpath, ignore_data_change, **kwargs)
+
+    def sample_cmdstanpy(self, outpath, ignore_data_change=False, **kwargs):
+
+        import cmdstanpy
+        cmdstanpy.utils.cxx_toolchain_path()
+
+        if not os.path.exists(outpath):
+            os.makedirs(outpath)
+
+        model_code_filename    = os.path.join(outpath, 'model.stan')
+        samples_cache_filename = os.path.join(outpath, 'samples.pkl')
+        diagnostics_filename   = os.path.join(outpath, 'diagnostics.txt')
+        traces_filename        = os.path.join(outpath, 'traces.png')
+
+        # load code from file if it exists
+        existing_code = None
+        if os.path.exists(model_code_filename):
+            with open(model_code_filename, 'r') as f:
+                existing_code = f.read()
+
+        # write out stan source code if different to existing code file
+        if existing_code != self.code:
+
+            if existing_code is not None:
+                print('Stan model code is different to the existing version on file (- file, + curr):')
+                # print the diff between cached and current code
+                result = difflib.unified_diff(existing_code.splitlines(), self.code.splitlines(), n=0, lineterm='')
+                print('\n'.join(list(result)[2:]))  # [2:] is to remove the control lines '---' and '+++'
+                print('recompiling...')
+
+            with open(model_code_filename, 'w') as f:
+                f.write(self.code)
+
+        # compile stan code or use existing exe file
+        stan_model = cmdstanpy.CmdStanModel(stan_file=model_code_filename,
+                                            cpp_options=None)
+                                            # cpp_options={'STAN_THREADS': True, 'STAN_OPENCL': True,
+                                            #              'OPENCL_PLATFORM_ID': 1, 'OPENCL_DEVICE_ID': 0})
+        exe_digest = _hash_filename(stan_model.exe_file)
+
+        # check if we need to resample, or can load from cache
+        needs_sample = True
+        samples = None
+        dict_digest = lambda d: md5(pickle.dumps(OrderedDict(sorted(d.items())))).hexdigest()
+        data_digest = _hash_dict_with_numpy_arrays(self.stan_input_data)  # dict_digest doesn't seem to always produce the same hash for the same numpy arrays
+        kwargs_digest = dict_digest(kwargs)
+        if samples_cache_filename is not None and os.path.exists(samples_cache_filename):
+            with open(samples_cache_filename, 'rb') as f:
+                cached_data_digest, cached_kwargs_digest, cached_exe_digest, samples = pickle.load(f)
+            data_changed = (not ignore_data_change) & (cached_data_digest != data_digest)
+            kwargs_changed = cached_kwargs_digest != kwargs_digest
+            exe_changed = cached_exe_digest != exe_digest
+            needs_sample = data_changed or kwargs_changed or exe_changed
+            if needs_sample:
+                changes = ['model changed'] if exe_changed else []
+                changes += ['data changed'] if data_changed else []
+                changes += ['stan kwargs changed'] if kwargs_changed else []
+                print(f'{", ".join(changes)}: resampling...')
+
+        if needs_sample:
+
+            # perform sampling
+            timer_start = datetime.datetime.now()
+            print(f'Started MCMC at {timer_start}')
+            # stan_fit = stan_model.sampling(data=self.stan_input_data, pars=self.params, **kwargs)
+            stan_fit = stan_model.sample(data=self.stan_input_data, **kwargs)
+            print(f'Elapsed MCMC {datetime.datetime.now() - timer_start}')
+
+            # convert variables into ndarray, similar to pystan
+            dims = stan_fit.stan_variable_dims
+            samples = dict()
+            for k, shape in dims.items():
+                x = stan_fit.stan_variable(k).values
+                if type(shape) is tuple:
+                    samples[k] = x.reshape((-1, ) + shape)
+                else:
+                    samples[k] = x
+
+            # store diagnostics in samples dict
+            if stan_fit is not None:
+                if 'seed' in kwargs:
+                    samples.seed = kwargs['seed']
+                else:
+                    samples.seed = -1
+                samples.elapsed_time = datetime.datetime.now() - timer_start
+                samples.diagnostics = stan_fit.diagnose()
+                print(samples.diagnostics)
+
+            # cache samples
+            with open(samples_cache_filename, 'wb') as f:
+                pickle.dump((data_digest, kwargs_digest, exe_digest, samples), f, protocol=2)
+
+            # write various meta info
+            with open(diagnostics_filename, 'w') as f:
+                f.write(f'seed: {samples.seed}\n')
+                f.write(f'elapsed_time: {samples.elapsed_time}\n')
+                f.write(f'diagnostics: {samples.diagnostics}\n')
+
+            # plot parameter traces
+            pars = [p for p in self.params if len(samples[p].shape) < 3]
+            fig = plt.figure(figsize=(12, 2 * len(pars) + 3))
+            gs = gridspec.GridSpec(len(pars) + 2, 2, width_ratios=[5, 1])
+            for i, k in enumerate(pars):
+                ax = fig.add_subplot(gs[i, 0])
+                is_multi = len(samples[k].shape) > 1
+                ax.plot(samples[k], lw=1, alpha=0.6 if is_multi else 0.9)
+                ax.set_ylabel(k)
+                ax = fig.add_subplot(gs[i, 1])
+                if is_multi:
+                    for j in range(samples[k].shape[1]):
+                        ax.hist(samples[k][:, j], bins=30, alpha=0.7)
+                else:
+                    ax.hist(samples[k], bins=50)
+
+            fig.tight_layout()
+            fig.savefig(traces_filename, dpi=150)
+            plt.close(fig)
+
+        return samples, needs_sample
+
+    def sample_pystan(self, outpath, ignore_data_change=False, **kwargs):
+
+        import pystan
 
         if not os.path.exists(outpath):
             os.makedirs(outpath)
@@ -1081,11 +1212,8 @@ def make_design_matrices(df, fe_formula=None, re_formulas=None):
         re_x = np.asarray(re_dmat)
         dmats_re[re_formula] = (re_dmat, factor_dmat)
 
-        # given the NxP re_x design matrix and the NxL factor_x design matrix,
-        # generate an NxPL z matrix where row n is re_x[n,:] (kron) factor_x[n,:], then reshape for Stan
-        z = np.einsum('np,nl->lnp', re_x, factor_x).reshape(factor_x.shape[1], re_x.shape[0], re_x.shape[1])
-
-        zs.append((z, re_formula))
+        _, l_idxs = np.nonzero(factor_x)
+        zs.append((re_x, l_idxs + 1, re_formula))
 
     return x, zs, dmat_fe, dmats_re
 
@@ -1126,6 +1254,13 @@ def kron_mvprod(ms, v):
     for m in ms[::-1]:
         u = m @ np.reshape(u.T, (m.shape[1], -1))
     return u.T
+
+
+def _hash_filename(filename):
+    m = md5()
+    with open(filename, 'rb') as f:
+        m.update(f.read())
+    return m.hexdigest()
 
 
 def _hash_dict_with_numpy_arrays(d):

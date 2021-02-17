@@ -32,13 +32,15 @@ data {
   /*** start data onecol ***/
   
   // {v} (1|{nlev}): {term}
-  matrix[N,{nlev}] Z_{v};
+  vector[N] Z_{v};
+  int<lower=1, upper={nlev}> l_{v}[N];
   
   /*** end data onecol ***/
   /*** start data multicol ***/
   
   // {v} ({ncol}|{nlev}): {term}
-  matrix[N,{ncol}] Z_{v}[{nlev}];
+  matrix[N,{ncol}] Z_{v};
+  int<lower=1, upper={nlev}> l_{v}[N];
   
   /*** end data multicol ***/
 }
@@ -176,7 +178,10 @@ model {
   lambda_{v} ~ prior_lambda_{v};
   target += log_lambda_{v};  // change-of-variables adjustment
   to_vector(z_{v}) ~ normal(0, 1);
-  {dpar} += Z_{v} * {v};
+  for (n in 1:N) {
+    int l = l_{v};
+    {dpar}[n,] += Z_{v}[n] * {v}[l];
+  }
   
   /*** end model onecol ***/
   /*** start model multicol ***/
@@ -185,9 +190,10 @@ model {
   to_vector(lambda_{v}) ~ prior_lambda_{v};
   target += sum(log_lambda_{v});  // change-of-variables adjustment
   chol_corr_{v} ~ lkj_corr_cholesky(2);
-  for (l in 1:{nlev}) {{
+  for (n in 1:N) {{
+    int l = l_{v}[n];
     to_vector(z_{v}[l]) ~ normal(0, 1);
-    {dpar} += Z_{v}[l] * {v}[l];
+    {dpar}[n,] += Z_{v}[n,] * {v}[l];
   }}
   
   /*** end model multicol ***/
