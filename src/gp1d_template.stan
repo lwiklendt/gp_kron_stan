@@ -178,10 +178,10 @@ model {
   lambda_{v} ~ prior_lambda_{v};
   target += log_lambda_{v};  // change-of-variables adjustment
   to_vector(z_{v}) ~ normal(0, 1);
-  for (n in 1:N) {
-    int l = l_{v};
+  for (n in 1:N) {{
+    int l = l_{v}[n];
     {dpar}[n,] += Z_{v}[n] * {v}[l];
-  }
+  }}
   
   /*** end model onecol ***/
   /*** start model multicol ***/

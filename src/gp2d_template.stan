@@ -229,10 +229,10 @@ model {
   target += sum(log_lambda_{v});
   Lambda_chol_{v} ~ lkj_corr_cholesky(2);
   to_vector(z_{v}) ~ normal(0, 1);
-  for (n in 1:N) {
-    int l = l_{v};
+  for (n in 1:N) {{
+    int l = l_{v}[n];
     {dpar}[n,] += Z_{v}[n] * {v}[l];
-  }
+  }}
   
   /*** end model onecol ***/
   /*** start model multicol ***/
