@@ -20,6 +20,12 @@ import numpy as np
 import scipy.linalg
 import patsy
 
+# workaround bug:
+# https://discourse.mc-stan.org/t/new-to-pystan-always-get-this-error-when-attempting-to-sample-modulenotfounderror-no-module-named-stanfit4anon-model/19288/3
+import platform
+if platform.system() == 'Darwin':
+    import multiprocessing
+    multiprocessing.set_start_method('fork')
 
 # note: for windows 10 ensure you have a c++ toolchain:
 # > conda install libpython m2w64-toolchain -c msys2
