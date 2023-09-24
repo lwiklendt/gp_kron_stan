@@ -1,0 +1,5 @@
+numpy==1.23.5
+scipy==1.11.2
+cmdstanpy==1.1.0
+matplotlib==3.8.0
+patsy==0.5.3
