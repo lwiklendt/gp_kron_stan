@@ -1,13 +1,8 @@
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-import datetime
-import difflib
 import functools
-from hashlib import md5
 import inspect
-import os
 from pathlib import Path
-import pickle
 import re
 from typing import List
 import sys
@@ -19,7 +14,6 @@ import matplotlib.ticker as mticker
 import numpy as np
 import scipy.linalg
 import patsy
-import cmdstanpy
 
 import stan_utils
 
@@ -443,6 +437,8 @@ class GPModel(ABC):
         if self.freqs is None:
             raise RuntimeError('set_data must be called on model before calling plot_coeffs')
         freqs_cpm = 2 ** self.freqs
+
+        # TODO plot lambdas
 
         # plot betas
         fig = self.plot(freqs_cpm, samples['beta'], self.fe_mu_coeffs, offset_eta=samples['offset_eta'])
@@ -1008,24 +1004,6 @@ def kron_mvprod(ms, v):
     return u.T
 
 
-def _hash_filename(filename):
-    m = md5()
-    with open(filename, 'rb') as f:
-        m.update(f.read())
-    return m.hexdigest()
-
-
-def _hash_dict_with_numpy_arrays(d):
-    m = md5()
-    for k, v in sorted(d.items()):
-        m.update(pickle.dumps(k))
-        if type(v) == np.ndarray:
-            m.update(v.tobytes())
-        else:
-            m.update(pickle.dumps(v))
-    return m.hexdigest()
-
-
 def edges_to_centers(edges, log=False):
     if log:
         edges = np.log2(edges)
@@ -1050,46 +1028,3 @@ def centers_to_edges(centers, log=False):
 
 def edge_meshgrid(centers_x, centers_y, logx=False, logy=False):
     return np.meshgrid(centers_to_edges(centers_x, logx), centers_to_edges(centers_y, logy))
-
-
-# the following are based on Michael Betancourt's stan_utility.py:
-# https://github.com/betanalpha/jupyter_case_studies/blob/master/pystan_workflow/stan_utility.py
-
-def check_div(fit):
-    """Check transitions that ended with a divergence"""
-    sampler_params = fit.get_sampler_params(inc_warmup=False)
-    divergent = [x for y in sampler_params for x in y['divergent__']]
-    n = int(sum(divergent))
-    N = len(divergent)
-    ret = f'{n} of {N} iterations ended with a divergence ({100*n/N}%)'
-    if n > 0:
-        ret += '\nTry running with larger adapt_delta to remove the divergences'
-    return ret
-
-
-def check_treedepth(fit):
-    """Check transitions that ended prematurely due to maximum tree depth limit"""
-    sampler_params = fit.get_sampler_params(inc_warmup=False)
-    depths = [x for y in sampler_params for x in y['treedepth__']]
-    max_depth = int(np.max(depths))
-    # n = sum(1 for x in depths if x == max_depth)
-    # N = len(depths)
-    # ret = f'top tree depth of {max_depth} accounted for {n} of {N} iterations ({100*n/N}%)'
-    ret = f'top tree depth of {max_depth}'
-    return ret
-
-
-def check_energy(fit):
-    """Checks the energy Bayesian fraction of missing information (E-BFMI)"""
-    sampler_params = fit.get_sampler_params(inc_warmup=False)
-    ret = []
-    for chain_num, s in enumerate(sampler_params):
-        energies = s['energy__']
-        numer = sum((energies[i] - energies[i - 1])**2 for i in range(1, len(energies))) / len(energies)
-        denom = np.var(energies)
-        if numer / denom < 0.2:
-            ret.append(f'Chain {chain_num}: E-BFMI = {numer / denom}'
-                       '\nE-BFMI below 0.2 indicates you may need to reparameterize your model')
-
-    return '\n'.join(ret)
-
