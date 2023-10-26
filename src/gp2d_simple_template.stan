@@ -9,18 +9,34 @@
 // {ncol} is the number of columns in the grouping term's design matrix,
 // {nlev} is the number of independent levels in the grouping term.
 
+functions {
+  // return to_matrix(y, b, a)
+  // where y = (A @ B) to_vector(V)
+  // and A is axa, B is bxb, V is bxa, and @ is the Kronecker product
+  matrix kron_mvprod2(matrix A, matrix B, matrix V) {
+    return (A * (B * V)')';
+  }
+}
+
 data {
-  int N;  // num rows or observations
-  int P;  // num mu       population effects
-  int Q;  // num residual population effects
+  int N;  // num rows
+  int P;  // num mu       population-effects
+  int Q;  // num residual propulation-effects
   int F;  // num frequencies
+  int H;  // num phases
   
   matrix[N,P] X;  // mu       population predictors
   matrix[N,Q] W;  // residual population predictors
   
-  matrix[N,F] y;  // observations
+  // observations are in phase-major frequency-minor order, s.t for observation n,
+  // y[n,2] is the 2nd frequency of the 1st phase,
+  // y[n,1+H] is the 1st frequency of the 2nd phase,
+  // and to_matrix(y[n], F, H) produces the correct matrix[F,H] arrangement
+  matrix[N,F*H] y;
 
-  matrix[F,F] kern_chol;  // cholesky decomposed kernel matrix
+  // cholesky decomposed kernel matrix for frequencies and phases
+  matrix[F,F] kern_chol_f;  
+  matrix[H,H] kern_chol_h;
   
   /*** start data onecol ***/
   
@@ -45,8 +61,8 @@ transformed data {
 
 
 parameters {
-  matrix[F,P] z_beta;
-  matrix[F,Q] z_gamma;
+  matrix[P,F*H] z_beta;
+  matrix[Q,F*H] z_gamma;
   
   real offset_eta;
   real<lower=0> tau_beta;
@@ -56,14 +72,14 @@ parameters {
   /*** start parameters onecol ***/
   
   real<lower=0> sigma_{v};
-  matrix[F,{nlev}] z_{v};
+  matrix[{nlev},F*H] z_{v};
   
   /*** end parameters onecol ***/
   /*** start parameters multicol ***/
   
   vector<lower=0>[{ncol}] sigma_{v};
   cholesky_factor_corr[{ncol}] chol_corr_{v};
-  matrix[F,{ncol}] z_{v}[{nlev}];
+  matrix[{ncol},F*H] z_{v}[{nlev}];
   
   /*** end parameters multicol ***/
 }
@@ -71,33 +87,33 @@ parameters {
 
 transformed parameters {
   
-  matrix[P,F] beta;
-  matrix[Q,F] gamma;
+  matrix[P,F*H] beta;
+  matrix[Q,F*H] gamma;
   
   /*** start transformed parameter declarations onecol ***/
   
-  matrix[{nlev},F] {v};
+  matrix[{nlev},F*H] {v};
   
   /*** end transformed parameter declarations onecol ***/
   /*** start transformed parameter declarations multicol ***/
   
-  matrix[{ncol},F] {v}[{nlev}];
+  matrix[{ncol},F*H] {v}[{nlev}];
   
   /*** end transformed parameter declarations multicol ***/
   
   {
     for (q in 1:Q) {
-      gamma[q,] = tau_gamma * (kern_chol * z_gamma[,q])';
+      gamma[q] = to_row_vector(tau_gamma * kron_mvprod2(kern_chol_h, kern_chol_f, to_matrix(z_gamma[q], F, H)));
     }
     
     for (p in 1:P) {
-      beta[p,] = tau_beta * (kern_chol * z_beta[,p])';
+      beta[p] = to_row_vector(tau_beta * kron_mvprod2(kern_chol_h, kern_chol_f, to_matrix(z_beta[p], F, H)));
     }
     
     /*** start transformed parameter definitions onecol ***/
     
     for (l in 1:{nlev}) {{
-      {v}[l] = sigma_{v} * (kern_chol * z_{v}[,l])';
+      {v}[l] = to_row_vector(sigma_{v} * kron_mvprod2(kern_chol_h, kern_chol_f, to_matrix(z_{v}[l], F, H)));
     }}
 
     /*** end transformed parameter definitions onecol ***/
@@ -106,7 +122,7 @@ transformed parameters {
     // sample each column
     for (c in 1:{ncol}) {{
       for (l in 1:{nlev}) {{
-        {v}[l][c,] = sigma_{v}[c] * (kern_chol * z_{v}[l][,c])';
+        {v}[l][c,] = sigma_{v}[c] * to_row_vector(kron_mvprod2(kern_chol_h, kern_chol_f, to_matrix(z_{v}[l][c,], F, H)));
       }}
     }}
     
@@ -114,22 +130,22 @@ transformed parameters {
     for (l in 1:{nlev}) {{
         {v}[l] = chol_corr_{v} * {v}[l];
     }}
-        
+    
     /*** end transformed parameter definitions multicol ***/
   }
 }
 
 
 model {
-  matrix[N,F] eta;
-  matrix[N,F] log_omega;
+  matrix[N,F*H] eta;
+  matrix[N,F*H] log_omega;
   
   offset_eta ~ student_t(3, mean_y, 4);
   tau_gamma ~ prior_tau_gamma;
   tau_beta  ~ prior_tau_beta;
   sigma_noise ~ prior_sigma_noise;
   
-  eta = X * beta + offset_eta;
+  eta       = X * beta + offset_eta;
   log_omega = W * gamma;
   
   to_vector(z_beta)  ~ normal(0, 1);
@@ -137,7 +153,7 @@ model {
   
   /*** start model onecol ***/
   
-  sigma_{v} ~ prior_sigma_{v};
+  sigma_{v}  ~ prior_sigma_{v};
   to_vector(z_{v}) ~ normal(0, 1);
   for (n in 1:N) {{
     int l = l_{v}[n];
@@ -148,7 +164,6 @@ model {
   /*** start model multicol ***/
   
   sigma_{v} ~ prior_sigma_{v};
-  chol_corr_{v} ~ lkj_corr_cholesky(2);
   for (n in 1:N) {{
     int l = l_{v}[n];
     to_vector(z_{v}[l]) ~ normal(0, 1);
@@ -157,55 +172,56 @@ model {
   
   /*** end model multicol ***/
   
-  // calculate residuals
+  // calculate residuals (structured)
   {
     to_vector(y) ~ normal(to_vector(eta), exp(to_vector(log_omega)));
   }
 }
 
 generated quantities {
-  
-  vector[F] noise;
+
+  vector[F*H] noise;
   
   /*** start generated quantities declarations onecol ***/
   
-  vector[F] new_{v};
-  
+  vector[F*H] new_{v};
+
   /*** end generated quantities declarations onecol ***/
   /*** start generated quantities declarations multicol ***/
   
-  matrix[{ncol},F] new_{v};
+  matrix[{ncol},F*H] new_{v};
   
   /*** end generated quantities declarations multicol ***/
+  
   {
-    vector[F] new_z;  // for sampling from standard normal
+    vector[F*H] new_z;  // for sampling from standard normal
     
     // sample noise for posterior-predictive
-    for (fi in 1:F) {{
-      noise[fi] = normal_rng(0, sigma_noise);
+    for (i in 1:F*H) {{
+      noise[i] = normal_rng(0, sigma_noise);
     }}
-      
+    
     /*** start generated quantities definitions onecol ***/
     
-    for (fi in 1:F) {{
-      new_z[fi] = normal_rng(0, 1);
+    for (i in 1:F*H) {{
+      new_z[i] = normal_rng(0, 1);
     }}
-    new_{v} = sigma_{v} * (kern_chol * new_z);
+    new_{v} = to_vector(kron_mvprod2(kern_chol_h, kern_chol_f, to_matrix(new_z, F, H)));
     
     /*** end generated quantities definitions onecol ***/
     /*** start generated quantities definitions multicol ***/
     
-    // sample each column for new level
+    // sample each column
     for (c in 1:{ncol}) {{
-      for (fi in 1:F) {{
-        new_z[fi] = normal_rng(0, 1);
+      for (i in 1:F*H) {{
+        new_z[i] = normal_rng(0, 1);
       }}
-      new_{v}[c,] = sigma_{v}[c] * (kern_chol * new_z)';
+      new_{v}[c,] = sigma_{v}[c] * to_row_vector(kron_mvprod2(kern_chol_h, kern_chol_f, to_matrix(new_z, F, H)));
     }}
     
     // correlate columns
     new_{v} = chol_corr_{v} * new_{v};
-      
+    
     /*** end generated quantities definitions multicol ***/
   }
 }
